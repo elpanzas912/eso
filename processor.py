@@ -11,6 +11,31 @@ import hashlib
 import mimetypes
 from pathlib import Path
 
+try:
+    import torch
+
+    _CUDA_AVAILABLE = torch.cuda.is_available()
+    _GPU_NAME = torch.cuda.get_device_name(0) if _CUDA_AVAILABLE else None
+except ImportError:
+    torch = None
+    _CUDA_AVAILABLE = False
+    _GPU_NAME = None
+
+if _CUDA_AVAILABLE:
+    print(f"[ClipFinder] GPU detectada: {_GPU_NAME}")
+    print(
+        f"[ClipFinder] VRAM: {torch.cuda.get_device_properties(0).total_memory // (1024**3)} GB"
+    )
+else:
+    print(
+        "[ClipFinder] GPU no detectada — usando CPU (instala PyTorch con CUDA para acelerar)"
+    )
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+WORK_DIR = PROJECT_ROOT / "work"
+MODELS_DIR = WORK_DIR / "_whisper_models"
+YT_CACHE_DIR = WORK_DIR / "_yt_cache"
+
 
 def _find_ffmpeg_dir():
     candidates = [
@@ -127,38 +152,92 @@ def extract_audio_track(video_path: Path, audio_index: int, output_path: Path) -
     return output_path
 
 
-def remux_for_browser(video_path: Path, output_path: Path) -> Path:
-    cmd = [
+def remux_for_browser(
+    video_path: Path, output_path: Path, audio_index: int = 0
+) -> Path:
+    print(
+        f"[ClipFinder] Remuxing {video_path.name} -> {output_path.name} (audio track #{audio_index})"
+    )
+
+    # Try 1: copy everything (instant if audio is already AAC/MP3 compatible)
+    cmd_copy = [
         FFMPEG,
         "-y",
         "-i",
         str(video_path),
-        "-c",
+        "-map",
+        "0:v:0",
+        "-map",
+        f"0:a:{audio_index}",
+        "-c:v",
+        "copy",
+        "-c:a",
         "copy",
         "-movflags",
         "+faststart",
         str(output_path),
     ]
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    print("[ClipFinder] Try 1: copy (instant)...")
+    result = subprocess.run(cmd_copy, capture_output=True, text=True)
+    if result.returncode == 0:
+        print("[ClipFinder] Remux copy succeeded")
+        return output_path
+
+    # Try 2: copy video, transcode audio to AAC (only audio re-encoded)
+    cmd_aac = [
+        FFMPEG,
+        "-y",
+        "-i",
+        str(video_path),
+        "-map",
+        "0:v:0",
+        "-map",
+        f"0:a:{audio_index}",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+    print("[ClipFinder] Try 2: copy video + AAC audio...")
+    result = subprocess.run(cmd_aac, capture_output=True, text=True)
+    if result.returncode == 0:
+        print("[ClipFinder] Remux AAC succeeded")
+        return output_path
+
+    # Try 3: full re-encode (slow, last resort)
+    if output_path.exists():
+        os.remove(output_path)
+    cmd_reencode = [
+        FFMPEG,
+        "-y",
+        "-i",
+        str(video_path),
+        "-map",
+        "0:v:0",
+        "-map",
+        f"0:a:{audio_index}",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-movflags",
+        "+faststart",
+        str(output_path),
+    ]
+    print("[ClipFinder] Try 3: full re-encode (slow)...")
+    result = subprocess.run(cmd_reencode, capture_output=True, text=True)
     if result.returncode != 0:
-        cmd = [
-            FFMPEG,
-            "-y",
-            "-i",
-            str(video_path),
-            "-c:v",
-            "libx264",
-            "-preset",
-            "fast",
-            "-c:a",
-            "aac",
-            "-movflags",
-            "+faststart",
-            str(output_path),
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            raise RuntimeError(f"ffmpeg remux error: {result.stderr}")
+        raise RuntimeError(f"ffmpeg remux error: {result.stderr}")
+    print("[ClipFinder] Remux re-encode succeeded")
     return output_path
 
 
@@ -179,6 +258,7 @@ def download_video(url: str, output_path: Path, progress_cb=None) -> Path:
         "progress_hooks": [ProgressHook()],
         "quiet": True,
         "no_warnings": True,
+        "cachedir": str(YT_CACHE_DIR),
     }
 
     ffmpeg_dir = os.path.dirname(FFMPEG)
@@ -216,7 +296,7 @@ def transcribe_video(
     Caches results to avoid re-transcribing on repeated runs.
     """
     cache_key = _cache_key(video_path, model_size, audio_index)
-    cache_dir = Path("work") / "_cache"
+    cache_dir = WORK_DIR / "_cache"
     cache_file = cache_dir / f"{cache_key}.json"
 
     if cache_file.exists():
@@ -228,9 +308,13 @@ def transcribe_video(
     import whisper
 
     if progress_cb:
-        progress_cb(f"Cargando modelo Whisper ({model_size})...")
+        progress_cb(
+            f"Cargando modelo Whisper ({model_size}) en {_GPU_NAME or 'CPU'}..."
+        )
 
-    model = whisper.load_model(model_size)
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    device = "cuda" if _CUDA_AVAILABLE else "cpu"
+    model = whisper.load_model(model_size, download_root=str(MODELS_DIR), device=device)
 
     actual_path = video_path
     if audio_index > 0:
@@ -242,25 +326,59 @@ def transcribe_video(
     if progress_cb:
         progress_cb(f"Transcribiendo {Path(actual_path).name}...")
 
-    result = model.transcribe(
-        str(actual_path),
-        word_timestamps=True,
-        verbose=False,
-        language=None,
-    )
+    fp16 = device == "cuda"
 
     words = []
-    for segment in result.get("segments", []):
-        for word_info in segment.get("words", []):
-            word = word_info.get("word", "").strip()
-            if word:
+    try:
+        result = model.transcribe(
+            str(actual_path),
+            word_timestamps=True,
+            verbose=False,
+            language=None,
+            fp16=fp16,
+        )
+        for segment in result.get("segments", []):
+            for word_info in segment.get("words", []):
+                word = word_info.get("word", "").strip()
+                if word:
+                    words.append(
+                        {
+                            "word": word,
+                            "start": round(word_info["start"], 3),
+                            "end": round(word_info["end"], 3),
+                        }
+                    )
+    except TypeError:
+        print(
+            "[ClipFinder] word_timestamps failed, falling back to segment-level timestamps"
+        )
+        result = model.transcribe(
+            str(actual_path),
+            word_timestamps=False,
+            verbose=False,
+            language=None,
+            fp16=fp16,
+        )
+        for segment in result.get("segments", []):
+            seg_start = segment.get("start", 0)
+            seg_end = segment.get("end", 0)
+            seg_text = segment.get("text", "").strip()
+            if not seg_text or seg_end <= seg_start:
+                continue
+            seg_words = seg_text.split()
+            duration = seg_end - seg_start
+            word_dur = duration / len(seg_words) if seg_words else 0
+            for i, w in enumerate(seg_words):
                 words.append(
                     {
-                        "word": word,
-                        "start": round(word_info["start"], 3),
-                        "end": round(word_info["end"], 3),
+                        "word": w,
+                        "start": round(seg_start + i * word_dur, 3),
+                        "end": round(seg_start + (i + 1) * word_dur, 3),
                     }
                 )
+
+    if not words:
+        raise RuntimeError(f"No se pudo transcribir {Path(actual_path).name}")
 
     cache_dir.mkdir(parents=True, exist_ok=True)
     with open(cache_file, "w", encoding="utf-8") as f:
@@ -362,34 +480,89 @@ def find_matching_segments(
     return merged
 
 
-def export_clip(long_video_path: str, segments: list[dict], output_path: str) -> str:
+def export_clip(
+    long_video_path: str,
+    segments: list[dict],
+    output_path: str,
+    pad_before: float = 0,
+    pad_after: float = 0,
+    audio_index: int = 0,
+) -> str:
     """
-    Export segments from long video using ffmpeg lossless copy.
-    If multiple segments, concatenates them.
-    Returns output path.
+    Export segments from long video as clean MP4.
+    Applies padding, merges overlapping segments, re-encodes for clean cuts.
+    Maps the selected audio track from the original video.
     """
+    if not segments:
+        raise RuntimeError("No hay segmentos para exportar")
+
+    video_duration = _get_video_duration(long_video_path)
+
+    padded = []
+    for seg in segments:
+        start = max(0, seg["start"] - pad_before)
+        end = min(video_duration, seg["end"] + pad_after)
+        padded.append({"start": start, "end": end})
+
+    padded.sort(key=lambda s: s["start"])
+
+    merged = [padded[0].copy()]
+    for seg in padded[1:]:
+        prev = merged[-1]
+        if seg["start"] <= prev["end"]:
+            prev["end"] = max(prev["end"], seg["end"])
+        else:
+            merged.append(seg.copy())
+
+    print(
+        f"[ClipFinder] Export: {len(segments)} segments -> {len(merged)} after padding({pad_before}s before, {pad_after}s after) + merge"
+    )
+
     work_dir = Path(output_path).parent
+    work_dir.mkdir(parents=True, exist_ok=True)
     segment_files = []
 
-    for i, seg in enumerate(segments):
+    for i, seg in enumerate(merged):
         seg_path = str(work_dir / f"_seg_{i}.mp4")
         cmd = [
             FFMPEG,
             "-y",
-            "-i",
-            long_video_path,
             "-ss",
             str(seg["start"]),
             "-to",
             str(seg["end"]),
-            "-c",
-            "copy",
-            "-avoid_negative_ts",
-            "make_zero",
+            "-i",
+            long_video_path,
+            "-map",
+            "0:v:0",
+            "-map",
+            f"0:a:{audio_index}",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "18",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-movflags",
+            "+faststart",
+            "-fflags",
+            "+genpts",
             seg_path,
         ]
+        print(
+            f"[ClipFinder] Encoding segment {i + 1}/{len(merged)}: {seg['start']:.1f}s - {seg['end']:.1f}s"
+        )
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
+            for sf in segment_files:
+                try:
+                    os.remove(sf)
+                except:
+                    pass
             raise RuntimeError(f"ffmpeg error on segment {i}: {result.stderr}")
         segment_files.append(seg_path)
 
@@ -413,17 +586,43 @@ def export_clip(long_video_path: str, segments: list[dict], output_path: str) ->
             concat_list,
             "-c",
             "copy",
+            "-movflags",
+            "+faststart",
             output_path,
         ]
+        print(f"[ClipFinder] Concatenating {len(segment_files)} segments...")
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
             raise RuntimeError(f"ffmpeg concat error: {result.stderr}")
 
-    # Clean up temp segments
     for sf in segment_files:
         try:
             os.remove(sf)
-        except Exception:
+        except:
             pass
+    try:
+        os.remove(str(work_dir / "_concat.txt"))
+    except:
+        pass
 
     return output_path
+
+
+def _get_video_duration(video_path: str) -> float:
+    cmd = [
+        FFPROBE,
+        "-v",
+        "quiet",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        str(video_path),
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode == 0 and result.stdout.strip():
+        try:
+            return float(result.stdout.strip())
+        except ValueError:
+            pass
+    return float("inf")

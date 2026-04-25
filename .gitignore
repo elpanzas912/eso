@@ -3,3 +3,5 @@ __pycache__/
 *.pyc
 work/
 .env
+residuos para ia/
+outputs/
