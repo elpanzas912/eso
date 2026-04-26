@@ -45,7 +45,6 @@
   .btn-sm { padding: 6px 14px; font-size: 12px; }
   .actions-row { display: flex; gap: 10px; align-items: center; margin-top: 16px; }
 
-  /* series list */
   .series-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
   .series-item { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--bg0); border: 1px solid var(--border); border-radius: var(--r); cursor: pointer; transition: all .15s; }
   .series-item:hover { border-color: var(--accent); }
@@ -55,8 +54,7 @@
   .series-del { margin-left: auto; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; }
   .series-del:hover { color: var(--accent2); }
 
-  /* results */
-  .result-card { background: var(--bg2); border: 2px solid var(--border); border-radius: var(--r); padding: 18px 20px; margin-bottom: 12px; cursor: pointer; transition: all .15s; }
+  .result-card { background: var(--bg2); border: 2px solid var(--border); border-radius: var(--r); padding: 18px 20px; margin-bottom: 12px; transition: all .15s; }
   .result-card:hover { border-color: var(--accent); transform: translateY(-1px); }
   .result-card.best { border-color: var(--green); }
   .result-ep { font-size: 18px; font-weight: 800; margin-bottom: 4px; }
@@ -69,7 +67,6 @@
   .result-bar-fill { height: 100%; border-radius: 2px; transition: width .3s; }
   .result-actions { margin-top: 12px; display: flex; gap: 8px; }
 
-  /* progress */
   #progress-panel { display: none; }
   #results-panel { display: none; margin-top: 16px; }
   .step { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--muted); font-family: var(--mono); }
@@ -91,7 +88,7 @@
 
 <header>
   <div class="logo">Clip<span>Finder</span></div>
-  <div class="badge">Detección de Episodio</div>
+  <div class="badge">Detección de Episodios · v2</div>
   <nav>
     <a href="/" class="nav-btn active">🔍 Detectar</a>
     <a href="/editor" class="nav-btn">✂️ Editor</a>
@@ -126,16 +123,6 @@
           <div class="grow">
             <label class="field-label">Carpeta de videos (.mkv/.mp4)</label>
             <input type="text" id="series-vids-path" placeholder='G:\Family Guy'>
-          </div>
-        </div>
-        <div class="row" style="margin-bottom:10px">
-          <div style="width:200px">
-            <label class="field-label">Idioma de subtítulos</label>
-            <select id="series-lang">
-              <option value="en">Inglés (en)</option>
-              <option value="es-ES">Español España (es-ES)</option>
-              <option value="es-419">Español Latam (es-419)</option>
-            </select>
           </div>
         </div>
         <div class="row">
@@ -192,12 +179,89 @@
 <div id="toast"></div>
 
 <script>
+const DEBUG_PAGE = 'detect';
+
+function debugPreview(value, limit = 320) {
+  try {
+    const raw = typeof value === 'string' ? value : JSON.stringify(value);
+    return raw.length > limit ? raw.slice(0, limit - 3) + '...' : raw;
+  } catch (err) {
+    const raw = String(value);
+    return raw.length > limit ? raw.slice(0, limit - 3) + '...' : raw;
+  }
+}
+
+function debugLog(scope, message, data) {
+  const prefix = `[ClipFinder][${DEBUG_PAGE}][${new Date().toISOString()}][${scope}] ${message}`;
+  if (typeof data === 'undefined') {
+    console.log(prefix);
+    return;
+  }
+  console.log(prefix, data);
+}
+
+function debugError(scope, message, error) {
+  const prefix = `[ClipFinder][${DEBUG_PAGE}][${new Date().toISOString()}][${scope}] ${message}`;
+  console.error(prefix, error);
+}
+
+async function fetchWithDebug(url, options = {}, scope = 'fetch') {
+  const method = options.method || 'GET';
+  debugLog(scope, `HTTP request -> ${method} ${url}`, {
+    headers: options.headers || {},
+    body: debugPreview(options.body || ''),
+  });
+
+  try {
+    const resp = await fetch(url, options);
+    const clone = resp.clone();
+    let bodyText = '';
+    try {
+      bodyText = await clone.text();
+    } catch (bodyErr) {
+      bodyText = `[body unreadable: ${bodyErr.message}]`;
+    }
+    debugLog(scope, `HTTP response <- ${resp.status} ${method} ${url}`, {
+      ok: resp.ok,
+      redirected: resp.redirected,
+      type: resp.type,
+      body: debugPreview(bodyText, 600),
+    });
+    return resp;
+  } catch (error) {
+    debugError(scope, `HTTP failure ${method} ${url}`, error);
+    throw error;
+  }
+}
+
+window.addEventListener('error', event => {
+  debugError('window.error', event.message, {
+    filename: event.filename,
+    lineno: event.lineno,
+    colno: event.colno,
+    error: event.error ? String(event.error) : null,
+  });
+});
+
+window.addEventListener('unhandledrejection', event => {
+  debugError('window.unhandledrejection', 'Promise rechazada sin catch', event.reason);
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+  debugLog('lifecycle', 'DOMContentLoaded', {
+    href: window.location.href,
+    userAgent: navigator.userAgent,
+  });
+});
+
 let seriesList = [];
 let selectedSeries = null;
 let jobId = null;
 let pollInterval = null;
+let _results = [];
 
 function toast(msg, type='') {
+  debugLog('toast', 'Mostrando toast', { msg, type });
   const el = document.getElementById('toast');
   el.textContent = msg; el.className = 'show ' + type;
   setTimeout(() => el.className = '', 3500);
@@ -205,19 +269,33 @@ function toast(msg, type='') {
 
 function toggleAddSeries() {
   const form = document.getElementById('add-series-form');
+  debugLog('series.form', 'Toggle add series form', {
+    previousDisplay: form.style.display,
+  });
   form.style.display = form.style.display === 'none' ? '' : 'none';
+  debugLog('series.form', 'Nuevo estado add series form', {
+    display: form.style.display,
+  });
 }
 
 async function loadSeries() {
+  debugLog('series.load', 'Cargando series');
   try {
-    const resp = await fetch('/api/series');
+    const resp = await fetchWithDebug('/api/series', {}, 'series.load');
     seriesList = await resp.json();
+    debugLog('series.load', 'Series cargadas', seriesList);
     renderSeriesList();
-  } catch(e) { console.error(e); }
+  } catch(e) {
+    debugError('series.load', 'Error cargando series', e);
+  }
 }
 
 function renderSeriesList() {
   const container = document.getElementById('series-list');
+  debugLog('series.render', 'Renderizando lista de series', {
+    total: seriesList.length,
+    selectedSeries,
+  });
   if (!seriesList.length) {
     container.innerHTML = '<div class="empty-state"><div class="icon">📂</div>Agregá una serie para empezar</div>';
     return;
@@ -229,11 +307,20 @@ function renderSeriesList() {
     el.innerHTML = `
       <div>
         <div class="series-name">${s.name}</div>
-        <div class="series-info">${s.episode_count || '?'} episodios · ${s.language || 'en'}</div>
+        <div class="series-info">${s.episode_count || '?'} episodios</div>
       </div>
-      <button class="series-del" onclick="event.stopPropagation();deleteSeries(${idx})">✕</button>
+      <button class="series-del" data-del-idx="${idx}">✕</button>
     `;
-    el.addEventListener('click', () => { selectedSeries = idx; renderSeriesList(); });
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.series-del')) return;
+      selectedSeries = idx;
+      debugLog('series.select', 'Serie seleccionada', { idx, series: s });
+      renderSeriesList();
+    });
+    el.querySelector('.series-del').addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteSeries(idx);
+    });
     container.appendChild(el);
   });
 }
@@ -242,66 +329,79 @@ async function addSeries() {
   const name = document.getElementById('series-name').value.trim();
   const subsPath = document.getElementById('series-subs-path').value.trim();
   const vidsPath = document.getElementById('series-vids-path').value.trim();
-  const lang = document.getElementById('series-lang').value;
+  debugLog('series.add', 'Intentando agregar serie', { name, subsPath, vidsPath });
 
   if (!name || !subsPath) { toast('Nombre y ruta de subtítulos son obligatorios', 'error'); return; }
 
   try {
-    const resp = await fetch('/api/series', {
+    const resp = await fetchWithDebug('/api/series', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({name, subtitles_path: subsPath, videos_path: vidsPath, language: lang})
-    });
+      body: JSON.stringify({name, subtitles_path: subsPath, videos_path: vidsPath})
+    }, 'series.add');
     const data = await resp.json();
+    debugLog('series.add', 'Respuesta agregar serie', data);
     if (data.error) { toast('❌ ' + data.error, 'error'); return; }
     toast('✅ Serie agregada', 'success');
     document.getElementById('add-series-form').style.display = 'none';
     await loadSeries();
     selectedSeries = seriesList.findIndex(s => s.name.toLowerCase() === name.toLowerCase());
+    debugLog('series.add', 'Serie seleccionada luego de agregar', { selectedSeries, name });
     renderSeriesList();
-  } catch(e) { toast('Error: ' + e.message, 'error'); }
+  } catch(e) {
+    debugError('series.add', 'Error agregando serie', e);
+    toast('Error: ' + e.message, 'error');
+  }
 }
 
 async function deleteSeries(idx) {
-  seriesList.splice(idx, 1);
-  if (selectedSeries === idx) selectedSeries = null;
-  else if (selectedSeries > idx) selectedSeries--;
-  // Rebuild registry
-  const resp = await fetch('/api/series');
-  const current = await resp.json();
-  // We'll just reload - simple approach
-  renderSeriesList();
+  debugLog('series.delete', 'Delete solicitado pero no implementado', { idx });
+  toast('Para eliminar una serie, editá el archivo series_registry.json', 'error');
 }
 
 async function startDetection() {
+  debugLog('detect.start', 'Inicio de detección solicitado', { selectedSeries });
   if (selectedSeries === null) { toast('Elegí una serie primero', 'error'); return; }
   const shortUrl = document.getElementById('short-url').value.trim();
   if (!shortUrl) { toast('Ingresá la URL del clip', 'error'); return; }
 
   const series = seriesList[selectedSeries];
   const model = document.getElementById('model-select').value;
+  debugLog('detect.start', 'Payload de detección armado', {
+    shortUrl,
+    series: series ? series.name : null,
+    model,
+  });
 
   document.getElementById('setup-panel').style.display = 'none';
   document.getElementById('progress-panel').style.display = 'block';
   document.getElementById('results-panel').style.display = 'none';
+  debugLog('detect.start', 'UI movida a progreso');
 
   try {
-    const resp = await fetch('/api/detect', {
+    const resp = await fetchWithDebug('/api/detect', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({short_url: shortUrl, series_name: series.name, language: series.language || 'en', model})
-    });
+      body: JSON.stringify({short_url: shortUrl, series_name: series.name, model})
+    }, 'detect.start');
     const data = await resp.json();
+    debugLog('detect.start', 'Respuesta inicio detección', data);
     if (data.error) { showError(data.error); return; }
     jobId = data.job_id;
     pollInterval = setInterval(pollDetection, 1500);
-  } catch(e) { showError(e.message); }
+    debugLog('detect.start', 'Polling iniciado', { jobId, pollInterval });
+  } catch(e) {
+    debugError('detect.start', 'Error iniciando detección', e);
+    showError(e.message);
+  }
 }
 
 async function pollDetection() {
+  debugLog('detect.poll', 'Polling de detección', { jobId });
   try {
-    const resp = await fetch(`/api/status/${jobId}`);
+    const resp = await fetchWithDebug(`/api/status/${jobId}`, {}, 'detect.poll');
     const job = await resp.json();
+    debugLog('detect.poll', 'Estado de job recibido', job);
     document.getElementById('progress-msg').textContent = job.progress || '';
 
     const steps = {
@@ -321,17 +421,23 @@ async function pollDetection() {
 
     if (job.status === 'done') {
       clearInterval(pollInterval);
+      debugLog('detect.poll', 'Polling detenido por DONE', { jobId });
       document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
       showResults(job.detection_results || []);
     } else if (job.status === 'error') {
       clearInterval(pollInterval);
+      debugLog('detect.poll', 'Polling detenido por ERROR', { jobId });
       document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
       showError(job.error || job.progress);
     }
-  } catch(e) {}
+  } catch(e) {
+    debugError('detect.poll', 'Error durante polling', e);
+  }
 }
 
 function showResults(results) {
+  debugLog('detect.results', 'Mostrando resultados', results);
+  _results = results;
   document.getElementById('progress-panel').style.display = 'none';
   document.getElementById('results-panel').style.display = 'block';
   const list = document.getElementById('results-list');
@@ -345,45 +451,76 @@ function showResults(results) {
   results.forEach((r, idx) => {
     const card = document.createElement('div');
     card.className = 'result-card' + (idx === 0 ? ' best' : '');
-    const scoreClass = r.score >= 70 ? 'score-high' : (r.score >= 50 ? 'score-medium' : 'score-low');
-    const barColor = r.score >= 70 ? 'var(--green)' : (r.score >= 50 ? 'var(--accent)' : 'var(--accent2)');
+    const score = r.score || r.confidence || 0;
+    const scoreClass = score >= 70 ? 'score-high' : (score >= 50 ? 'score-medium' : 'score-low');
+    const barColor = score >= 70 ? 'var(--green)' : (score >= 50 ? 'var(--accent)' : 'var(--accent2)');
+    const hasVideo = r.video_path && r.video_path !== 'null';
     card.innerHTML = `
       <div class="result-ep">${r.id}</div>
-      <div class="result-title">${r.title}</div>
+      <div class="result-title">${(r.title || 'Sin título').replace(/</g,'&lt;')}</div>
       <div class="result-score ${scoreClass}">
-        Coincidencia: ${r.score}%${r.video_path ? '' : ' · ⚠️ Video no encontrado'}
+        Coincidencia: ${score}%${hasVideo ? '' : ' · ⚠️ Video no encontrado'}
       </div>
-      <div class="result-bar"><div class="result-bar-fill" style="width:${r.score}%;background:${barColor}"></div></div>
+      <div class="result-bar"><div class="result-bar-fill" style="width:${score}%;background:${barColor}"></div></div>
       <div class="result-actions">
-        ${r.video_path ? `<button class="btn btn-primary btn-sm" onclick="goToEditor('${r.id}', '${r.video_path.replace(/\\/g, "\\\\")}')">✂️ Ir al editor</button>` : ''}
+        ${hasVideo ? `<button class="btn btn-primary btn-sm" data-go-idx="${idx}">✂️ Ir al editor</button>` : ''}
         <button class="btn btn-ghost btn-sm" onclick="resetDetection()">↩ Nueva búsqueda</button>
       </div>
     `;
+    const goBtn = card.querySelector('button[data-go-idx]');
+    if (goBtn) goBtn.addEventListener('click', () => goToEditor(idx));
     list.appendChild(card);
   });
 }
 
-function goToEditor(episodeId, videoPath) {
+async function goToEditor(idx) {
+  const r = _results[idx];
+  debugLog('handoff', 'Ir al editor solicitado', { idx, result: r });
+  if (!r) return;
+
+  const btn = document.querySelector(`button[data-go-idx="${idx}"]`);
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Abriendo...'; }
+
   const shortUrl = document.getElementById('short-url').value.trim();
   const model = document.getElementById('model-select').value;
-  const series = seriesList[selectedSeries] || {};
-  localStorage.setItem('cf_short_url', shortUrl);
-  localStorage.setItem('cf_model', model);
-  localStorage.setItem('cf_detected_episode', episodeId);
-  localStorage.setItem('cf_detected_video', videoPath);
-  localStorage.setItem('cf_series_name', series.name || '');
-  localStorage.setItem('cf_language', series.language || 'en');
-  localStorage.setItem('cf_detect_job', jobId || '');
-  window.location.href = '/editor?auto=1';
+
+  try {
+    const resp = await fetchWithDebug('/api/handoff', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        video_path: r.video_path,
+        short_url: shortUrl,
+        model: model,
+        episode_id: r.id,
+        title: r.title
+      })
+    }, 'handoff');
+    const data = await resp.json();
+    debugLog('handoff', 'Respuesta handoff', data);
+    if (data.key) {
+      debugLog('handoff', 'Redirigiendo al editor', { key: data.key });
+      window.location.href = '/editor?from=' + data.key;
+    } else {
+      toast('Error al pasar datos al editor', 'error');
+      if (btn) { btn.disabled = false; btn.textContent = '✂️ Ir al editor'; }
+    }
+  } catch(e) {
+    debugError('handoff', 'Error creando handoff', e);
+    toast('Error: ' + e.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = '✂️ Ir al editor'; }
+  }
 }
 
 function showError(msg) {
+  debugLog('detect.error', 'Mostrando error', { msg });
   document.getElementById('progress-panel').style.display = 'none';
   document.getElementById('setup-panel').style.display = 'block';
   toast('❌ ' + msg, 'error');
 }
 
 function resetDetection() {
+  debugLog('detect.reset', 'Reseteando detección', { jobId, pollInterval, results: _results.length });
   clearInterval(pollInterval);
   jobId = null;
   document.getElementById('progress-panel').style.display = 'none';
@@ -391,6 +528,7 @@ function resetDetection() {
   document.getElementById('setup-panel').style.display = 'block';
 }
 
+debugLog('bootstrap', 'Inicializando detect.html');
 loadSeries();
 </script>
 </body>

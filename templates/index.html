@@ -521,6 +521,83 @@
 <div id="toast"></div>
 
 <script>
+const DEBUG_PAGE = 'editor';
+
+function debugPreview(value, limit = 320) {
+  try {
+    const raw = typeof value === 'string' ? value : JSON.stringify(value);
+    return raw.length > limit ? raw.slice(0, limit - 3) + '...' : raw;
+  } catch (err) {
+    const raw = String(value);
+    return raw.length > limit ? raw.slice(0, limit - 3) + '...' : raw;
+  }
+}
+
+function debugLog(scope, message, data) {
+  const prefix = `[ClipFinder][${DEBUG_PAGE}][${new Date().toISOString()}][${scope}] ${message}`;
+  if (typeof data === 'undefined') {
+    console.log(prefix);
+    return;
+  }
+  console.log(prefix, data);
+}
+
+function debugError(scope, message, error) {
+  const prefix = `[ClipFinder][${DEBUG_PAGE}][${new Date().toISOString()}][${scope}] ${message}`;
+  console.error(prefix, error);
+}
+
+async function fetchWithDebug(url, options = {}, scope = 'fetch') {
+  const method = options.method || 'GET';
+  debugLog(scope, `HTTP request -> ${method} ${url}`, {
+    headers: options.headers || {},
+    body: debugPreview(options.body || ''),
+  });
+
+  try {
+    const resp = await fetch(url, options);
+    const clone = resp.clone();
+    let bodyText = '';
+    try {
+      bodyText = await clone.text();
+    } catch (bodyErr) {
+      bodyText = `[body unreadable: ${bodyErr.message}]`;
+    }
+    debugLog(scope, `HTTP response <- ${resp.status} ${method} ${url}`, {
+      ok: resp.ok,
+      redirected: resp.redirected,
+      type: resp.type,
+      body: debugPreview(bodyText, 700),
+    });
+    return resp;
+  } catch (error) {
+    debugError(scope, `HTTP failure ${method} ${url}`, error);
+    throw error;
+  }
+}
+
+window.addEventListener('error', event => {
+  debugError('window.error', event.message, {
+    filename: event.filename,
+    lineno: event.lineno,
+    colno: event.colno,
+    error: event.error ? String(event.error) : null,
+  });
+});
+
+window.addEventListener('unhandledrejection', event => {
+  debugError('window.unhandledrejection', 'Promise rechazada sin catch', event.reason);
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+  debugLog('lifecycle', 'DOMContentLoaded', {
+    href: window.location.href,
+    userAgent: navigator.userAgent,
+  });
+});
+
+debugLog('bootstrap', 'Inicializando index.html');
+
 // ── STATE ──
 let jobId = null;
 let pollInterval = null;
@@ -558,6 +635,7 @@ function fmtShort(s) {
   return `${m}:${String(sec).padStart(2,'0')}`;
 }
 function toast(msg, type='') {
+  debugLog('toast', 'Mostrando toast', { msg, type });
   const el = document.getElementById('toast');
   el.textContent = msg; el.className = 'show ' + type;
   setTimeout(() => el.className = '', 3500);
@@ -569,6 +647,7 @@ function seededRandom(seed) {
 
 // ── SOURCE TOGGLE ──
 function setSource(s) {
+  debugLog('source', 'Cambiando source', { from: currentSource, to: s });
   currentSource = s;
   document.getElementById('local-input').style.display = s === 'local' ? '' : 'none';
   document.getElementById('url-input').style.display = s === 'url' ? '' : 'none';
@@ -578,23 +657,26 @@ function setSource(s) {
 
 // ── PROBE ──
 function clearProbe() {
+  debugLog('probe', 'Ocultando probe result');
   document.getElementById('probe-result').style.display = 'none';
 }
 
 async function probeFile() {
   const raw = document.getElementById('long-path').value.trim();
+  debugLog('probe', 'Probe solicitado', { path: raw });
   if (!raw) { toast('Ingresá una ruta primero', 'error'); return; }
 
   const btn = document.getElementById('probe-btn');
   btn.disabled = true; btn.textContent = '⏳ Analizando...';
 
   try {
-    const resp = await fetch('/api/probe', {
+    const resp = await fetchWithDebug('/api/probe', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({path: raw})
-    });
+    }, 'probe');
     const data = await resp.json();
+    debugLog('probe', 'Respuesta probe', data);
     if (data.error) { toast('❌ ' + data.error, 'error'); return; }
 
     detectedAudioIdx = data.english_index;
@@ -615,10 +697,16 @@ async function probeFile() {
 
     document.getElementById('probe-result').style.display = '';
     toast('✅ Pistas detectadas', 'success');
+    debugLog('probe', 'Probe completado', {
+      detectedAudioIdx,
+      streams: data.streams || [],
+    });
   } catch(e) {
+    debugError('probe', 'Error en probe', e);
     toast('Error: ' + e.message, 'error');
   } finally {
     btn.disabled = false; btn.textContent = '🔍 Detectar pistas';
+    debugLog('probe', 'Probe finalizado (finally)', { detectedAudioIdx });
   }
 }
 
@@ -626,6 +714,12 @@ async function probeFile() {
 async function startProcess() {
   const shortUrl = document.getElementById('short-url').value.trim();
   const model = document.getElementById('model-select').value;
+  debugLog('process', 'Inicio de deteccion de segmentos solicitado', {
+    currentSource,
+    shortUrl,
+    model,
+    detectedAudioIdx,
+  });
 
   if (!shortUrl) { toast('Ingresá la URL del clip corto', 'error'); return; }
 
@@ -642,41 +736,52 @@ async function startProcess() {
     body.long_url = url;
     body.audio_index = 0;
   }
+  debugLog('process', 'Payload de proceso armado', body);
 
   document.getElementById('setup-panel').style.display = 'none';
   document.getElementById('progress-panel').style.display = 'block';
+  debugLog('process', 'UI movida a progreso');
 
   try {
-    const resp = await fetch('/api/process', {
+    const resp = await fetchWithDebug('/api/process', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
       body: JSON.stringify(body)
-    });
+    }, 'process');
     const data = await resp.json();
+    debugLog('process', 'Respuesta inicio proceso', data);
     if (data.error) { showError(data.error); return; }
     jobId = data.job_id;
     pollInterval = setInterval(pollStatus, 1500);
+    debugLog('process', 'Polling iniciado', { jobId, pollInterval });
   } catch(e) {
+    debugError('process', 'Error iniciando proceso', e);
     showError('Error conectando con el servidor: ' + e.message);
   }
 }
 
 async function pollStatus() {
+  debugLog('process.poll', 'Polling de status', { jobId });
   try {
-    const resp = await fetch(`/api/status/${jobId}`);
+    const resp = await fetchWithDebug(`/api/status/${jobId}`, {}, 'process.poll');
     const job = await resp.json();
+    debugLog('process.poll', 'Estado de job recibido', job);
     updateSteps(job.status);
     document.getElementById('progress-msg').textContent = job.progress || '';
     if (job.status === 'done') {
       clearInterval(pollInterval);
+      debugLog('process.poll', 'Polling detenido por DONE', { jobId });
       segments = (job.segments || []).map(s => ({...s}));
       detectedAudioIdx = job.audio_index ?? 0;
       jobStreams = job.streams || [];
       openEditor(job);
     } else if (job.status === 'error') {
       clearInterval(pollInterval);
+      debugLog('process.poll', 'Polling detenido por ERROR', { jobId });
       showError(job.error || job.progress);
     }
-  } catch(e) {}
+  } catch(e) {
+    debugError('process.poll', 'Error durante polling', e);
+  }
 }
 
 const STEP_MAP = {
@@ -691,6 +796,7 @@ const ACTIVE_MAP = {
   transcribing: 'step-transcribe', matching: 'step-match',
 };
 function updateSteps(status) {
+  debugLog('process.steps', 'Actualizando pasos visuales', { status });
   const all = ['step-probe','step-download','step-transcribe','step-match'];
   const done = STEP_MAP[status] || [];
   all.forEach(id => {
@@ -703,6 +809,7 @@ function updateSteps(status) {
 }
 
 function showError(msg) {
+  debugLog('process.error', 'Mostrando error', { msg });
   document.getElementById('progress-panel').style.display = 'none';
   document.getElementById('setup-panel').style.display = 'block';
   toast('❌ ' + msg, 'error');
@@ -712,6 +819,10 @@ function showError(msg) {
 function buildTrackLabels() {
   const container = document.getElementById('track-labels');
   container.innerHTML = '<div class="tl-label tl-label-header"></div>';
+  debugLog('tracks.labels', 'Construyendo labels de tracks', {
+    streams: jobStreams,
+    selectedTrackId,
+  });
 
   jobStreams.forEach((stream, idx) => {
     const lang = stream.language || 'und';
@@ -739,6 +850,10 @@ function buildTrackLabels() {
 function buildTrackRows() {
   const inner = document.getElementById('timeline-inner');
   inner.querySelectorAll('.track-row, #segments-track, #playhead').forEach(el => el.remove());
+  debugLog('tracks.rows', 'Construyendo filas de timeline', {
+    streamCount: jobStreams.length,
+    selectedTrackId,
+  });
 
   jobStreams.forEach((stream, idx) => {
     const row = document.createElement('div');
@@ -769,6 +884,10 @@ function buildTrackRows() {
 }
 
 function selectTrack(idx) {
+  debugLog('tracks.select', 'Seleccionando track', {
+    previous: selectedTrackId,
+    next: idx,
+  });
   selectedTrackId = idx;
   document.querySelectorAll('.tl-label[data-track]').forEach(el => {
     el.classList.toggle('active', parseInt(el.dataset.track) === idx);
@@ -783,6 +902,7 @@ function selectTrack(idx) {
 function updateAudioBadge() {
   if (jobStreams.length === 0) {
     document.getElementById('audio-badge').textContent = '🎧 sin pistas de audio';
+    debugLog('tracks.badge', 'Sin tracks para badge');
     return;
   }
   const s = jobStreams[selectedTrackId] || jobStreams[0];
@@ -790,11 +910,20 @@ function updateAudioBadge() {
   const ch = s.channels === 6 ? '5.1' : s.channels === 2 ? '2.0' : `${s.channels || '?'}ch`;
   document.getElementById('audio-badge').textContent =
     `🎧 #${selectedTrackId} · ${lang}${s.title ? ' · ' + s.title : ''} · ${ch}`;
+  debugLog('tracks.badge', 'Badge de audio actualizado', {
+    selectedTrackId,
+    stream: s,
+  });
 }
 
 function renderWaveforms() {
   const innerWidth = getTrackWidth();
   if (!innerWidth) return;
+  debugLog('tracks.waveform', 'Renderizando waveforms', {
+    innerWidth,
+    streamCount: jobStreams.length,
+    selectedTrackId,
+  });
 
   document.querySelectorAll('.waveform-canvas').forEach(canvas => {
     const idx = parseInt(canvas.dataset.trackIdx);
@@ -830,8 +959,13 @@ function renderWaveforms() {
 function initResizeHandle() {
   const bar = document.getElementById('resize-bar-h');
   const bottomPanel = document.getElementById('bottom-panel');
+  debugLog('resize', 'Inicializando resize handle');
 
   bar.addEventListener('mousedown', e => {
+    debugLog('resize', 'Resize start', {
+      clientY: e.clientY,
+      currentHeight: bottomPanel.offsetHeight,
+    });
     e.preventDefault();
     isDragging = false;
     isResizing = true;
@@ -847,6 +981,9 @@ function initResizeHandle() {
       bottomPanel.style.height = newH + 'px';
     };
     const onUp = () => {
+      debugLog('resize', 'Resize end', {
+        finalHeight: bottomPanel.style.height,
+      });
       isResizing = false;
       bar.classList.remove('dragging');
       document.body.style.cursor = '';
@@ -862,6 +999,7 @@ function initResizeHandle() {
 
 // ── EDITOR ──
 function openEditor(job) {
+  debugLog('editor.open', 'Abriendo editor', job);
   document.getElementById('progress-panel').style.display = 'none';
   document.getElementById('editor').style.display = 'flex';
   document.getElementById('reset-btn').style.display = '';
@@ -891,8 +1029,17 @@ function openEditor(job) {
   updateAudioBadge();
 
   video.src = `/api/video/${jobId}`;
+  debugLog('editor.open', 'Asignando src de video', {
+    jobId,
+    videoSrc: video.src,
+  });
   video.addEventListener('loadedmetadata', () => {
     videoDuration = video.duration;
+    debugLog('editor.video', 'Metadata cargada', {
+      duration: videoDuration,
+      videoWidth: video.videoWidth,
+      videoHeight: video.videoHeight,
+    });
     buildRuler(); renderWaveforms(); renderTimeline(); renderSegList();
   }, {once: true});
   video.addEventListener('timeupdate', onTimeUpdate);
@@ -908,12 +1055,20 @@ function onTimeUpdate() {
 }
 
 function togglePlay() {
+  debugLog('editor.playback', 'Toggle play', { paused: video.paused, currentTime: video.currentTime });
   if (video.paused) video.play(); else video.pause();
 }
-video.addEventListener('play', () => document.getElementById('play-btn').textContent = '⏸');
-video.addEventListener('pause', () => document.getElementById('play-btn').textContent = '▶');
+video.addEventListener('play', () => {
+  debugLog('editor.playback', 'Video play event', { currentTime: video.currentTime });
+  document.getElementById('play-btn').textContent = '⏸';
+});
+video.addEventListener('pause', () => {
+  debugLog('editor.playback', 'Video pause event', { currentTime: video.currentTime });
+  document.getElementById('play-btn').textContent = '▶';
+});
 
 function skipVideo(s) {
+  debugLog('editor.playback', 'Skip video', { delta: s, currentTime: video.currentTime });
   video.currentTime = Math.max(0, Math.min(videoDuration, video.currentTime + s));
 }
 
@@ -921,6 +1076,10 @@ function onSegmentsTrackClick(e) {
   if (isDragging) return;
   const inner = document.getElementById('timeline-inner');
   const rect = inner.getBoundingClientRect();
+  debugLog('timeline.click', 'Click en track de segmentos', {
+    clientX: e.clientX,
+    trackWidth: inner.offsetWidth,
+  });
   video.currentTime = Math.max(0, Math.min(videoDuration, ((e.clientX - rect.left) / inner.offsetWidth) * videoDuration));
 }
 
@@ -939,6 +1098,12 @@ function buildRuler() {
   inner.style.width = trackW + 'px';
   const intervals = [1,2,5,10,15,30,60,120,300,600];
   const tickEvery = intervals.find(i => (i/videoDuration)*trackW >= 45) || 600;
+  debugLog('timeline.ruler', 'Construyendo regla', {
+    videoDuration,
+    trackW,
+    tickEvery,
+    zoomLevel,
+  });
   for (let t = 0; t <= videoDuration; t += tickEvery) {
     const tick = document.createElement('div');
     tick.className = 'ruler-tick';
@@ -950,6 +1115,7 @@ function buildRuler() {
 
 // ── ZOOM ──
 function zoomTimeline(dir) {
+  debugLog('timeline.zoom', 'Zoom solicitado', { dir, previousZoom: zoomLevel });
   if (dir === 0) {
     zoomLevel = 1;
   } else {
@@ -963,6 +1129,7 @@ function zoomTimeline(dir) {
     }
   }
   document.getElementById('zoom-label').textContent = zoomLevel + '×';
+  debugLog('timeline.zoom', 'Zoom aplicado', { zoomLevel });
   buildRuler(); renderWaveforms(); renderTimeline(); renderSegList();
   scrollToPlayhead();
 }
@@ -982,6 +1149,12 @@ function renderTimeline() {
   track.querySelectorAll('.timeline-seg').forEach(el => el.remove());
 
   if (!videoDuration) return;
+  debugLog('timeline.render', 'Renderizando timeline', {
+    segments: segments.length,
+    activeSegIdx,
+    videoDuration,
+    zoomLevel,
+  });
 
   segments.forEach((seg, idx) => {
     const leftPct = (seg.start / videoDuration) * 100;
@@ -1013,10 +1186,14 @@ function renderTimeline() {
 }
 
 function startDrag(e, idx) {
+  debugLog('timeline.drag', 'Drag start', {
+    idx,
+    segment: segments[idx],
+  });
   e.stopPropagation(); isDragging = true;
   const inner = document.getElementById('timeline-inner');
   const dur = segments[idx].end - segments[idx].start;
-  const startX = e.clientX;
+  let startX = e.clientX;
 
   const onMove = ev => {
     const dx = ev.clientX - startX;
@@ -1026,11 +1203,22 @@ function startDrag(e, idx) {
     startX = ev.clientX;
     renderTimeline(); renderSegList();
   };
-  const onUp = () => { isDragging = false; document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+  const onUp = () => {
+    debugLog('timeline.drag', 'Drag end', {
+      idx,
+      segment: segments[idx],
+    });
+    isDragging = false; document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp);
+  };
   document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
 }
 
 function startResize(e, idx, side) {
+  debugLog('timeline.resize', 'Resize start', {
+    idx,
+    side,
+    segment: segments[idx],
+  });
   e.stopPropagation(); isDragging = true;
   const inner = document.getElementById('timeline-inner');
 
@@ -1041,11 +1229,19 @@ function startResize(e, idx, side) {
     if (side === 'right' && t > segments[idx].start + 0.5) segments[idx].end = t;
     renderTimeline(); renderSegList();
   };
-  const onUp = () => { isDragging = false; document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+  const onUp = () => {
+    debugLog('timeline.resize', 'Resize end', {
+      idx,
+      side,
+      segment: segments[idx],
+    });
+    isDragging = false; document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp);
+  };
   document.addEventListener('mousemove', onMove); document.addEventListener('mouseup', onUp);
 }
 
 function selectSeg(idx) {
+  debugLog('segments.select', 'Seleccionando segmento', { idx, segment: segments[idx] });
   activeSegIdx = idx;
   renderTimeline();
   document.querySelectorAll('.seg-row').forEach((r, i) => r.classList.toggle('active', i === idx));
@@ -1055,6 +1251,10 @@ function selectSeg(idx) {
 function renderSegList() {
   const list = document.getElementById('seg-list');
   document.getElementById('seg-count-badge').textContent = `${segments.length} seg`;
+  debugLog('segments.render', 'Renderizando lista de segmentos', {
+    count: segments.length,
+    activeSegIdx,
+  });
 
   if (!segments.length) {
     list.innerHTML = '<div class="empty-state"><div class="icon">🎞</div>Sin segmentos</div>';
@@ -1082,6 +1282,7 @@ function renderSegList() {
 
 function deleteSeg(e, idx) {
   e.stopPropagation();
+  debugLog('segments.delete', 'Eliminando segmento', { idx, segment: segments[idx] });
   segments.splice(idx, 1);
   if (activeSegIdx >= segments.length) activeSegIdx = segments.length - 1;
   renderTimeline(); renderSegList();
@@ -1090,6 +1291,7 @@ function deleteSeg(e, idx) {
 function addManualSegment() {
   const t = video.currentTime;
   segments.push({ start: t, end: Math.min(t + 10, videoDuration), text: 'Manual', confidence: null });
+  debugLog('segments.add', 'Agregando segmento manual', { currentTime: t, segment: segments[segments.length - 1] });
   selectSeg(segments.length - 1);
   renderTimeline(); renderSegList();
   toast('Segmento agregado — ajustá los bordes en el timeline');
@@ -1097,6 +1299,10 @@ function addManualSegment() {
 
 // ── EXPORT ──
 async function exportClip() {
+  debugLog('export', 'Export solicitado', {
+    jobId,
+    segmentCount: segments.length,
+  });
   if (!segments.length) { toast('No hay segmentos para exportar', 'error'); return; }
   const btn = document.getElementById('export-btn');
   const padBefore = parseFloat(document.getElementById('pad-before').value) || 0;
@@ -1107,25 +1313,41 @@ async function exportClip() {
 
   try {
     const sorted = [...segments].sort((a,b) => a.start - b.start);
-    const resp = await fetch('/api/export', {
+    debugLog('export', 'Payload de export armado', {
+      padBefore,
+      padAfter,
+      audioIndex,
+      sorted,
+    });
+    const resp = await fetchWithDebug('/api/export', {
       method: 'POST', headers: {'Content-Type':'application/json'},
       body: JSON.stringify({job_id: jobId, segments: sorted, pad_before: padBefore, pad_after: padAfter, audio_index: audioIndex})
-    });
+    }, 'export');
     if (!resp.ok) { const e = await resp.json(); throw new Error(e.error || 'Error'); }
     const blob = await resp.blob();
+    debugLog('export', 'Blob recibido', { size: blob.size, type: blob.type });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = 'clip_exportado.mp4'; a.click();
     URL.revokeObjectURL(url);
     toast('✅ Clip exportado', 'success');
+    debugLog('export', 'Export completado y descarga disparada');
   } catch(e) {
+    debugError('export', 'Error exportando clip', e);
     toast('❌ ' + e.message, 'error');
   } finally {
     btn.disabled = false; btn.textContent = '⬇ Exportar clip';
+    debugLog('export', 'Export finalizado (finally)');
   }
 }
 
 // ── RESET ──
 function resetApp() {
+  debugLog('reset', 'Reseteando app', {
+    jobId,
+    segments: segments.length,
+    videoDuration,
+    jobStreams: jobStreams.length,
+  });
   clearInterval(pollInterval);
   jobId = null; segments = []; activeSegIdx = -1; videoDuration = 0; video.src = '';
   jobStreams = []; selectedTrackId = 0;
@@ -1140,6 +1362,11 @@ function resetApp() {
 document.addEventListener('keydown', e => {
   if (document.getElementById('editor').style.display === 'none') return;
   if (e.target.tagName === 'INPUT') return;
+  debugLog('keyboard', 'Keydown capturado', {
+    code: e.code,
+    shiftKey: e.shiftKey,
+    activeSegIdx,
+  });
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
   if (e.code === 'ArrowLeft') skipVideo(e.shiftKey ? -10 : -1);
   if (e.code === 'ArrowRight') skipVideo(e.shiftKey ? 10 : 1);
@@ -1151,12 +1378,22 @@ document.addEventListener('keydown', e => {
 });
 
 window.addEventListener('resize', () => {
+  debugLog('window.resize', 'Resize detectado', {
+    width: window.innerWidth,
+    height: window.innerHeight,
+    videoDuration,
+  });
   if (videoDuration) { buildRuler(); renderWaveforms(); renderTimeline(); }
 });
 
 document.getElementById('tracks-scroll').addEventListener('wheel', e => {
   if (document.getElementById('editor').style.display === 'none') return;
   if (e.ctrlKey || e.metaKey) {
+    debugLog('timeline.wheel', 'Wheel con modificador para zoom', {
+      deltaY: e.deltaY,
+      ctrlKey: e.ctrlKey,
+      metaKey: e.metaKey,
+    });
     e.preventDefault();
     const dir = e.deltaY < 0 ? 1 : -1;
     zoomTimeline(dir);
@@ -1164,34 +1401,98 @@ document.getElementById('tracks-scroll').addEventListener('wheel', e => {
 }, {passive: false});
 
 // ── AUTO-START FROM DETECTION ──
-(function autoStart() {
+(async function autoStart() {
   const params = new URLSearchParams(window.location.search);
-  if (params.get('auto') !== '1') return;
+  const fromKey = params.get('from') || (params.get('auto') === '1' ? '__ls__' : null);
+  debugLog('autostart', 'Evaluando auto-start', {
+    fromKey,
+    search: window.location.search,
+    params: Object.fromEntries(params.entries()),
+  });
+  if (!fromKey) return;
 
-  const videoPath = localStorage.getItem('cf_detected_video');
-  const shortUrl = localStorage.getItem('cf_short_url');
-  const model = localStorage.getItem('cf_model') || 'base';
+  window.history.replaceState({}, '', '/editor');
+  debugLog('autostart', 'Query limpiada de la URL');
+  toast('Cargando episodio detectado...');
+
+  let videoPath = '';
+  let shortUrl = '';
+  let model = 'base';
+
+  if (fromKey === '__ls__') {
+    toast('Cargando desde localStorage...', '');
+    videoPath = localStorage.getItem('cf_detected_video') || '';
+    shortUrl = localStorage.getItem('cf_short_url') || '';
+    model = localStorage.getItem('cf_model') || 'base';
+    debugLog('autostart', 'Datos cargados desde localStorage', {
+      videoPath,
+      shortUrl,
+      model,
+    });
+    localStorage.removeItem('cf_detected_video');
+    localStorage.removeItem('cf_short_url');
+    localStorage.removeItem('cf_model');
+    localStorage.removeItem('cf_detected_episode');
+    localStorage.removeItem('cf_series_name');
+    localStorage.removeItem('cf_language');
+    localStorage.removeItem('cf_detect_job');
+  } else {
+    toast('Cargando datos del servidor...', '');
+    try {
+      const resp = await fetchWithDebug('/api/handoff/' + fromKey, {}, 'autostart');
+      if (!resp.ok) { toast('Datos de detección expirados', 'error'); return; }
+      const data = await resp.json();
+      debugLog('autostart', 'Datos recibidos del handoff', data);
+      videoPath = data.video_path || '';
+      shortUrl = data.short_url || '';
+      model = data.model || 'base';
+      toast('Datos recibidos: ' + videoPath.substring(0, 40), '');
+    } catch(e) {
+      debugError('autostart', 'Error cargando handoff', e);
+      toast('Error cargando datos: ' + e.message, 'error');
+      return;
+    }
+  }
 
   if (!videoPath || !shortUrl) {
-    toast('No se encontraron datos de detección. Volvé a la página de detección.', 'error');
+    debugLog('autostart', 'Auto-start abortado por datos incompletos', {
+      videoPath,
+      shortUrl,
+      model,
+    });
+    toast('No se encontraron datos de detección', 'error');
     return;
   }
 
-  localStorage.removeItem('cf_detected_video');
-  localStorage.removeItem('cf_short_url');
-  localStorage.removeItem('cf_model');
-  localStorage.removeItem('cf_detected_episode');
-  localStorage.removeItem('cf_series_name');
-  localStorage.removeItem('cf_language');
-  localStorage.removeItem('cf_detect_job');
-
-  currentSource = 'local';
+  setSource('local');
   document.getElementById('long-path').value = videoPath;
   document.getElementById('short-url').value = shortUrl;
   document.getElementById('model-select').value = model;
+  debugLog('autostart', 'Campos llenados desde auto-start', {
+    videoPath,
+    shortUrl,
+    model,
+  });
 
-  toast('Cargando episodio detectado...');
-  setTimeout(() => startProcess(), 800);
+  toast('Campos llenos. Iniciando probe...');
+
+  await new Promise(r => setTimeout(r, 300));
+  debugLog('autostart', 'Delay previo a probe completado');
+
+  try {
+    await probeFile();
+    debugLog('autostart', 'Probe completado desde auto-start', { detectedAudioIdx });
+    toast('Probe OK. Iniciando detección de segmentos...');
+  } catch(e) {
+    debugError('autostart', 'Probe fallo durante auto-start', e);
+    toast('Probe falló, intentando igual...');
+  }
+
+  await new Promise(r => setTimeout(r, 300));
+  debugLog('autostart', 'Delay previo a startProcess completado');
+  await startProcess();
+  debugLog('autostart', 'startProcess disparado desde auto-start');
 })();
+</script>
 </body>
 </html>
