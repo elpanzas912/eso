@@ -282,7 +282,7 @@ async function startDetection() {
   const model = document.getElementById('model-select').value;
 
   document.getElementById('setup-panel').style.display = 'none';
-  document.getElementById('progress-panel').style.display = '';
+  document.getElementById('progress-panel').style.display = 'block';
   document.getElementById('results-panel').style.display = 'none';
 
   try {
@@ -333,7 +333,7 @@ async function pollDetection() {
 
 function showResults(results) {
   document.getElementById('progress-panel').style.display = 'none';
-  document.getElementById('results-panel').style.display = '';
+  document.getElementById('results-panel').style.display = 'block';
   const list = document.getElementById('results-list');
 
   if (!results.length) {
@@ -379,7 +379,7 @@ function goToEditor(episodeId, videoPath) {
 
 function showError(msg) {
   document.getElementById('progress-panel').style.display = 'none';
-  document.getElementById('setup-panel').style.display = '';
+  document.getElementById('setup-panel').style.display = 'block';
   toast('❌ ' + msg, 'error');
 }
 
@@ -388,7 +388,7 @@ function resetDetection() {
   jobId = null;
   document.getElementById('progress-panel').style.display = 'none';
   document.getElementById('results-panel').style.display = 'none';
-  document.getElementById('setup-panel').style.display = '';
+  document.getElementById('setup-panel').style.display = 'block';
 }
 
 loadSeries();
