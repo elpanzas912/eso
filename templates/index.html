@@ -248,6 +248,8 @@
   }
   .tl-label:hover { background: var(--bg3); }
   .tl-label.active { color: var(--text); }
+  .tl-label-static { cursor: default; }
+  .tl-label-static:hover { background: transparent; }
   .tl-label-header {
     height: 24px; padding: 0;
     border-bottom: 1px solid var(--border);
@@ -620,6 +622,8 @@ let selectedTrackId = 0;
 let jobStreams = [];
 let zoomLevel = 1;
 let isSwitchingTrack = false;
+let waveformDataByTrack = {};
+let waveformRenderToken = 0;
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 32;
 const ZOOM_STEPS = [1, 2, 4, 6, 8, 12, 16, 24, 32];
@@ -650,6 +654,104 @@ function toast(msg, type='') {
 function seededRandom(seed) {
   let s = seed;
   return () => { s = (s * 16807 + 11) % 2147483647; return (s - 1) / 2147483646; };
+}
+
+function getTrackColor(idx) {
+  return TRACK_COLORS[idx % TRACK_COLORS.length];
+}
+
+function getTrackSummary(stream, idx) {
+  const lang = stream?.language || 'und';
+  const title = stream?.title ? ` · ${stream.title}` : '';
+  const codec = stream?.codec || 'audio';
+  const ch = stream?.channels === 6 ? '5.1' : stream?.channels === 2 ? '2.0' : stream?.channels === 1 ? '1.0' : `${stream?.channels || '?'}ch`;
+  return {
+    lang,
+    title,
+    codec,
+    ch,
+    label: `#${idx} · ${lang} · ${codec} ${ch}${title}`,
+  };
+}
+
+async function ensureWaveformData(audioIndex) {
+  if (waveformDataByTrack[audioIndex]) {
+    return waveformDataByTrack[audioIndex];
+  }
+
+  debugLog('waveform.fetch', 'Solicitando waveform real', {
+    jobId,
+    audioIndex,
+  });
+
+  const resp = await fetchWithDebug(`/api/waveform/${jobId}?audio_index=${audioIndex}&bins=4096`, {}, 'waveform.fetch');
+  const data = await resp.json();
+  if (!resp.ok || data.error) {
+    throw new Error(data.error || `No se pudo generar waveform para la pista #${audioIndex}`);
+  }
+
+  waveformDataByTrack[audioIndex] = data;
+  debugLog('waveform.fetch', 'Waveform recibido', {
+    audioIndex,
+    peaks: data.peaks?.length || 0,
+    duration: data.duration,
+  });
+  return data;
+}
+
+function prepareWaveformCanvas(canvas, width, height) {
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.floor(width * dpr));
+  canvas.height = Math.max(1, Math.floor(height * dpr));
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.scale(dpr, dpr);
+  ctx.clearRect(0, 0, width, height);
+  return ctx;
+}
+
+function drawWaveformLoading(canvas, width, height) {
+  const ctx = prepareWaveformCanvas(canvas, width, height);
+  ctx.fillStyle = 'rgba(245, 166, 35, 0.08)';
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = 'rgba(245, 166, 35, 0.18)';
+  ctx.beginPath();
+  for (let x = 0; x < width; x += 14) {
+    ctx.moveTo(x, height * 0.25);
+    ctx.lineTo(x + 8, height * 0.75);
+  }
+  ctx.stroke();
+}
+
+function drawWaveformCanvas(canvas, peaks, color, width, height) {
+  const ctx = prepareWaveformCanvas(canvas, width, height);
+  ctx.fillStyle = 'rgba(255,255,255,0.02)';
+  ctx.fillRect(0, 0, width, height);
+
+  if (!Array.isArray(peaks) || peaks.length === 0) {
+    ctx.strokeStyle = 'rgba(232,232,240,0.15)';
+    ctx.beginPath();
+    ctx.moveTo(0, height / 2);
+    ctx.lineTo(width, height / 2);
+    ctx.stroke();
+    return;
+  }
+
+  const centerY = height / 2;
+  const usableHeight = Math.max(6, height - 6);
+  ctx.fillStyle = color;
+
+  for (let i = 0; i < peaks.length; i += 1) {
+    const peak = peaks[i];
+    const x = (i / peaks.length) * width;
+    const nextX = ((i + 1) / peaks.length) * width;
+    const barW = Math.max(1, nextX - x);
+    const bar = Math.max(1, peak * usableHeight);
+    ctx.fillRect(x, centerY - bar / 2, barW, bar);
+  }
 }
 
 function buildPlaybackUrl(audioIndex) {
@@ -907,27 +1009,17 @@ function buildTrackLabels() {
     selectedTrackId,
   });
 
-  jobStreams.forEach((stream, idx) => {
-    const lang = stream.language || 'und';
-    const title = stream.title || '';
-    const color = TRACK_COLORS[idx % TRACK_COLORS.length];
-    const label = document.createElement('div');
-    label.className = 'tl-label' + (idx === selectedTrackId ? ' active' : '');
-    label.dataset.track = idx;
-    const ch = stream.channels === 6 ? '5.1' : stream.channels === 2 ? '2.0' : stream.channels === 1 ? '1.0' : `${stream.channels}ch`;
-    label.innerHTML = `
-      <span class="tl-dot" style="background:${color}"></span>
-      <span class="tl-name">${stream.codec} · ${lang}</span>
-      <span class="tl-info">${ch}</span>
-    `;
-    label.addEventListener('click', () => selectTrack(idx));
-    container.appendChild(label);
-  });
+  const label = document.createElement('div');
+  label.id = 'current-track-label';
+  label.className = 'tl-label tl-label-static active';
+  container.appendChild(label);
 
   const segLabel = document.createElement('div');
   segLabel.className = 'tl-label tl-label-segments';
   segLabel.innerHTML = '<span style="font-size:13px">✂</span><span class="tl-name">Segmentos</span>';
   container.appendChild(segLabel);
+
+  renderCurrentTrackLabel();
 }
 
 function buildTrackRows() {
@@ -938,20 +1030,19 @@ function buildTrackRows() {
     selectedTrackId,
   });
 
-  jobStreams.forEach((stream, idx) => {
-    const row = document.createElement('div');
-    row.className = 'track-row' + (idx === selectedTrackId ? ' track-row-active' : '');
-    row.dataset.track = idx;
-    row.style.height = TRACK_ROW_H + 'px';
-    row.style.position = 'relative';
-    row.style.overflow = 'hidden';
+  const row = document.createElement('div');
+  row.id = 'active-track-row';
+  row.className = 'track-row track-row-active';
+  row.dataset.track = selectedTrackId;
+  row.style.height = TRACK_ROW_H + 'px';
+  row.style.position = 'relative';
+  row.style.overflow = 'hidden';
 
-    const canvas = document.createElement('canvas');
-    canvas.className = 'waveform-canvas';
-    canvas.dataset.trackIdx = idx;
-    row.appendChild(canvas);
-    inner.appendChild(row);
-  });
+  const canvas = document.createElement('canvas');
+  canvas.className = 'waveform-canvas';
+  canvas.id = 'active-waveform-canvas';
+  row.appendChild(canvas);
+  inner.appendChild(row);
 
   const segTrack = document.createElement('div');
   segTrack.id = 'segments-track';
@@ -966,13 +1057,35 @@ function buildTrackRows() {
   inner.appendChild(playhead);
 }
 
+function renderCurrentTrackLabel() {
+  const label = document.getElementById('current-track-label');
+  if (!label) return;
+
+  const stream = jobStreams[selectedTrackId] || jobStreams[0];
+  if (!stream) {
+    label.innerHTML = `
+      <span class="tl-dot" style="background:${getTrackColor(0)}"></span>
+      <span class="tl-name">Sin pista activa</span>
+      <span class="tl-info">--</span>
+    `;
+    return;
+  }
+
+  const summary = getTrackSummary(stream, selectedTrackId);
+  label.dataset.track = String(selectedTrackId);
+  label.innerHTML = `
+    <span class="tl-dot" style="background:${getTrackColor(selectedTrackId)}"></span>
+    <span class="tl-name">${summary.codec} · ${summary.lang}${summary.title}</span>
+    <span class="tl-info">${summary.ch}</span>
+  `;
+}
+
 function syncTrackUI() {
-  document.querySelectorAll('.tl-label[data-track]').forEach(el => {
-    el.classList.toggle('active', parseInt(el.dataset.track, 10) === selectedTrackId);
-  });
-  document.querySelectorAll('.track-row').forEach(el => {
-    el.classList.toggle('track-row-active', parseInt(el.dataset.track, 10) === selectedTrackId);
-  });
+  renderCurrentTrackLabel();
+  const activeTrackRow = document.getElementById('active-track-row');
+  if (activeTrackRow) {
+    activeTrackRow.dataset.track = String(selectedTrackId);
+  }
   const playbackSelect = document.getElementById('playback-audio');
   if (playbackSelect) {
     playbackSelect.value = String(selectedTrackId);
@@ -1057,40 +1170,46 @@ function updateAudioBadge() {
 function renderWaveforms() {
   const innerWidth = getTrackWidth();
   if (!innerWidth) return;
+  const canvas = document.getElementById('active-waveform-canvas');
+  if (!canvas) return;
   debugLog('tracks.waveform', 'Renderizando waveforms', {
     innerWidth,
     streamCount: jobStreams.length,
     selectedTrackId,
   });
 
-  document.querySelectorAll('.waveform-canvas').forEach(canvas => {
-    const idx = parseInt(canvas.dataset.trackIdx);
-    const color = TRACK_COLORS[idx % TRACK_COLORS.length];
-    const h = TRACK_ROW_H;
-    const dpr = window.devicePixelRatio || 1;
+  const renderToken = ++waveformRenderToken;
+  const audioIndex = selectedTrackId;
+  drawWaveformLoading(canvas, innerWidth, TRACK_ROW_H);
 
-    canvas.width = Math.floor(innerWidth * dpr);
-    canvas.height = Math.floor(h * dpr);
-    canvas.style.width = innerWidth + 'px';
-    canvas.style.height = h + 'px';
-
-    const ctx = canvas.getContext('2d');
-    ctx.scale(dpr, dpr);
-    ctx.clearRect(0, 0, innerWidth, h);
-
-    const rng = seededRandom(idx * 1337 + 42);
-    const barW = 2;
-    const gap = 4;
-    const numBars = Math.ceil(innerWidth / (barW + gap));
-
-    for (let b = 0; b < numBars; b++) {
-      const amp = rng() * 0.65 + 0.15;
-      const barH = amp * (h - 8);
-      ctx.fillStyle = color;
-      ctx.globalAlpha = idx === selectedTrackId ? 0.55 : 0.25;
-      ctx.fillRect(b * (barW + gap), (h - barH) / 2, barW, barH);
-    }
-  });
+  ensureWaveformData(audioIndex)
+    .then(data => {
+      if (renderToken !== waveformRenderToken) return;
+      drawWaveformCanvas(
+        canvas,
+        data.peaks || [],
+        getTrackColor(audioIndex),
+        innerWidth,
+        TRACK_ROW_H,
+      );
+      debugLog('tracks.waveform', 'Waveform real dibujado', {
+        audioIndex,
+        peaks: data.peaks?.length || 0,
+      });
+    })
+    .catch(error => {
+      if (renderToken !== waveformRenderToken) return;
+      debugError('tracks.waveform', 'Error dibujando waveform real', error);
+      const ctx = prepareWaveformCanvas(canvas, innerWidth, TRACK_ROW_H);
+      ctx.fillStyle = 'rgba(232, 86, 58, 0.12)';
+      ctx.fillRect(0, 0, innerWidth, TRACK_ROW_H);
+      ctx.strokeStyle = 'rgba(232, 86, 58, 0.6)';
+      ctx.beginPath();
+      ctx.moveTo(0, TRACK_ROW_H / 2);
+      ctx.lineTo(innerWidth, TRACK_ROW_H / 2);
+      ctx.stroke();
+      toast(error.message || 'No se pudo cargar la waveform', 'error');
+    });
 }
 
 // ── RESIZE HANDLE ──
@@ -1141,6 +1260,8 @@ function openEditor(job) {
   document.getElementById('progress-panel').style.display = 'none';
   document.getElementById('editor').style.display = 'flex';
   document.getElementById('reset-btn').style.display = '';
+  waveformDataByTrack = {};
+  waveformRenderToken = 0;
 
   jobStreams = job.streams || [];
   if (jobStreams.length === 0) {
@@ -1504,6 +1625,8 @@ function resetApp() {
   clearInterval(pollInterval);
   jobId = null; segments = []; activeSegIdx = -1; videoDuration = 0; video.src = '';
   jobStreams = []; selectedTrackId = 0;
+  waveformDataByTrack = {};
+  waveformRenderToken = 0;
   document.getElementById('editor').style.display = 'none';
   document.getElementById('progress-panel').style.display = 'none';
   document.getElementById('setup-panel').style.display = 'block';

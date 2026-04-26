@@ -467,6 +467,60 @@ def video(job_id: str):
     return send_file(video_path, mimetype=mime_type, conditional=True)
 
 
+@app.route("/api/waveform/<job_id>")
+def waveform(job_id: str):
+    with jobs_lock:
+        job = jobs.get(job_id)
+    if not job or "long_path" not in job:
+        logger.warning("Waveform solicitado sin job/path valido | job_id=%s", job_id)
+        return jsonify({"error": "Job no encontrado"}), 404
+
+    audio_index_raw = request.args.get("audio_index", job.get("audio_index", 0))
+    bins_raw = request.args.get("bins", 4096)
+    try:
+        audio_index = int(audio_index_raw)
+        bins = int(bins_raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Waveform solicitado con parametros invalidos | job_id=%s | audio_index=%s | bins=%s",
+            job_id,
+            audio_index_raw,
+            bins_raw,
+        )
+        return (
+            jsonify(
+                {
+                    "error": f"Parámetros inválidos: audio_index={audio_index_raw}, bins={bins_raw}"
+                }
+            ),
+            400,
+        )
+
+    source_path = job.get("original_path") or job.get("long_path")
+    try:
+        payload = processor.get_waveform_peaks(
+            Path(source_path), audio_index=audio_index, bins=bins
+        )
+    except RuntimeError as exc:
+        logger.exception(
+            "Waveform fallo | job_id=%s | audio_index=%s | bins=%s | source=%s",
+            job_id,
+            audio_index,
+            bins,
+            source_path,
+        )
+        return jsonify({"error": str(exc)}), 400
+
+    logger.info(
+        "Waveform listo | job_id=%s | audio_index=%s | bins=%s | peaks=%s",
+        job_id,
+        audio_index,
+        bins,
+        len(payload.get("peaks", [])),
+    )
+    return jsonify(payload)
+
+
 @app.route("/api/export", methods=["POST"])
 def export():
     data = request.get_json()

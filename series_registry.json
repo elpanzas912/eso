@@ -4,5 +4,11 @@
     "subtitles_path": "G:\\SVR Family guy",
     "videos_path": "G:\\Family Guy",
     "language": "en"
+  },
+  {
+    "name": "Chicago pd",
+    "subtitles_path": "G:\\SVR CHICAGO PD",
+    "videos_path": "G:\\Plex\\Series\\Chicago pd",
+    "language": "en"
   }
 ]

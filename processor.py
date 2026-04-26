@@ -9,6 +9,9 @@ import os
 import shutil
 import hashlib
 import mimetypes
+import math
+import wave
+from array import array
 from pathlib import Path
 
 from debug_utils import get_logger, preview, summarize_segments, summarize_words
@@ -40,6 +43,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 WORK_DIR = PROJECT_ROOT / "work"
 MODELS_DIR = WORK_DIR / "_whisper_models"
 YT_CACHE_DIR = WORK_DIR / "_yt_cache"
+WAVEFORM_CACHE_DIR = WORK_DIR / "_waveform_cache"
 
 
 def _find_ffmpeg_dir():
@@ -90,6 +94,14 @@ logger.info(
 
 def _format_cmd(cmd: list[str]) -> str:
     return subprocess.list2cmdline([str(part) for part in cmd])
+
+
+def _waveform_cache_key(video_path: Path, audio_index: int, bins: int) -> str:
+    key_str = str(video_path.resolve()) + f"|waveform|{audio_index}|{bins}"
+    if video_path.exists():
+        stat = video_path.stat()
+        key_str += f"|{stat.st_size}|{stat.st_mtime}"
+    return hashlib.md5(key_str.encode()).hexdigest()[:20]
 
 
 def probe_video(video_path: Path) -> dict:
@@ -193,6 +205,98 @@ def extract_audio_track(video_path: Path, audio_index: int, output_path: Path) -
         output_path,
     )
     return output_path
+
+
+def get_waveform_peaks(
+    video_path: Path,
+    audio_index: int = 0,
+    bins: int = 4096,
+) -> dict:
+    if bins <= 0:
+        raise RuntimeError(f"Cantidad de bins inválida: {bins}")
+
+    WAVEFORM_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_key = _waveform_cache_key(video_path, audio_index, bins)
+    cache_file = WAVEFORM_CACHE_DIR / f"{cache_key}.json"
+    wav_file = WAVEFORM_CACHE_DIR / f"{cache_key}.wav"
+
+    if cache_file.exists():
+        logger.info(
+            "Waveform cache hit | video=%s | audio_index=%s | bins=%s | cache=%s",
+            video_path,
+            audio_index,
+            bins,
+            cache_file,
+        )
+        with open(cache_file, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    logger.info(
+        "Generando waveform real | video=%s | audio_index=%s | bins=%s | wav=%s",
+        video_path,
+        audio_index,
+        bins,
+        wav_file,
+    )
+    if not wav_file.exists():
+        extract_audio_track(video_path, audio_index, wav_file)
+
+    with wave.open(str(wav_file), "rb") as wav:
+        frame_rate = wav.getframerate()
+        total_frames = wav.getnframes()
+        channels = wav.getnchannels()
+        sample_width = wav.getsampwidth()
+
+        if sample_width != 2:
+            raise RuntimeError(
+                f"Waveform solo soporta PCM de 16-bit. sample_width={sample_width}"
+            )
+
+        frames_per_bin = max(1, math.ceil(total_frames / bins))
+        peaks = []
+
+        for _ in range(bins):
+            raw_frames = wav.readframes(frames_per_bin)
+            if not raw_frames:
+                break
+
+            samples = array("h")
+            samples.frombytes(raw_frames)
+            if channels > 1:
+                samples = array("h", samples[::channels])
+
+            if not samples:
+                peaks.append(0.0)
+                continue
+
+            peak = max(abs(sample) for sample in samples) / 32768.0
+            peaks.append(round(min(1.0, peak), 4))
+
+    if len(peaks) < bins:
+        peaks.extend([0.0] * (bins - len(peaks)))
+
+    duration = round(total_frames / frame_rate, 3) if frame_rate else 0
+    payload = {
+        "audio_index": audio_index,
+        "bins": bins,
+        "duration": duration,
+        "channels": channels,
+        "sample_rate": frame_rate,
+        "peaks": peaks,
+    }
+
+    with open(cache_file, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+
+    logger.info(
+        "Waveform generado | video=%s | audio_index=%s | duration=%s | peaks=%s | cache=%s",
+        video_path,
+        audio_index,
+        duration,
+        len(peaks),
+        cache_file,
+    )
+    return payload
 
 
 def remux_for_browser(
