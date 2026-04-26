@@ -59,6 +59,68 @@ def _job_snapshot(job: dict | None) -> dict:
     return snapshot
 
 
+def _resolve_playback_video(job_id: str, job: dict, audio_index: int) -> str:
+    streams = job.get("streams") or []
+    default_audio_index = int(job.get("audio_index", 0))
+    playback_path = job.get("long_path")
+    source_path = job.get("original_path") or playback_path
+
+    if source_path is None:
+        raise RuntimeError("El job no tiene una fuente de video disponible")
+
+    if streams and (audio_index < 0 or audio_index >= len(streams)):
+        raise RuntimeError(
+            f"Pista de audio inválida: {audio_index}. Disponibles: 0-{len(streams) - 1}"
+        )
+
+    if (
+        audio_index == default_audio_index
+        and playback_path
+        and (
+            str(playback_path) != str(source_path)
+            or len(streams) <= 1
+        )
+    ):
+        logger.info(
+            "Playback reutiliza video principal del job | job_id=%s | audio_index=%s | path=%s",
+            job_id,
+            audio_index,
+            playback_path,
+        )
+        return playback_path
+
+    job_dir = WORK_DIR / job_id
+    job_dir.mkdir(exist_ok=True)
+    alt_playback_path = job_dir / f"playback_audio_{audio_index}.mp4"
+
+    if alt_playback_path.exists():
+        logger.info(
+            "Playback reutiliza remux cacheado | job_id=%s | audio_index=%s | path=%s",
+            job_id,
+            audio_index,
+            alt_playback_path,
+        )
+        return str(alt_playback_path)
+
+    logger.info(
+        "Playback generando remux alternativo | job_id=%s | audio_index=%s | source=%s | output=%s",
+        job_id,
+        audio_index,
+        source_path,
+        alt_playback_path,
+    )
+    remuxed_path = processor.remux_for_browser(
+        Path(source_path), alt_playback_path, audio_index=audio_index
+    )
+    logger.info(
+        "Playback remux alternativo listo | job_id=%s | audio_index=%s | path=%s",
+        job_id,
+        audio_index,
+        remuxed_path,
+    )
+    return str(remuxed_path)
+
+
 def _request_debug_payload():
     return {
         "query": request.args.to_dict(flat=False),
@@ -370,13 +432,34 @@ def video(job_id: str):
         logger.warning("Video solicitado sin job/path valido | job_id=%s", job_id)
         abort(404)
 
-    video_path = job["long_path"]
+    audio_index_raw = request.args.get("audio_index", job.get("audio_index", 0))
+    try:
+        audio_index = int(audio_index_raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Video solicitado con audio_index invalido | job_id=%s | raw=%s",
+            job_id,
+            audio_index_raw,
+        )
+        return jsonify({"error": f"audio_index inválido: {audio_index_raw}"}), 400
+
+    try:
+        video_path = _resolve_playback_video(job_id, job, audio_index)
+    except RuntimeError as exc:
+        logger.exception(
+            "No se pudo resolver playback para video | job_id=%s | audio_index=%s",
+            job_id,
+            audio_index,
+        )
+        return jsonify({"error": str(exc)}), 400
+
     mime_type, _ = mimetypes.guess_type(video_path)
     if not mime_type:
         mime_type = "video/mp4"
     logger.info(
-        "Sirviendo video | job_id=%s | path=%s | mime=%s",
+        "Sirviendo video | job_id=%s | audio_index=%s | path=%s | mime=%s",
         job_id,
+        audio_index,
         video_path,
         mime_type,
     )

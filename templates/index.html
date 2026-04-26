@@ -471,6 +471,12 @@
       <div class="spacer"></div>
       <span id="seg-count-badge" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-right:6px"></span>
       <div style="display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:11px;color:var(--muted)">
+        <span>Escucha:</span>
+        <select id="playback-audio" onchange="selectTrack(parseInt(this.value, 10) || 0)" style="background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:4px;font-family:var(--mono);font-size:11px">
+          <option value="0">Pista #0</option>
+        </select>
+      </div>
+      <div style="display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:11px;color:var(--muted)">
         <span>Audio:</span>
         <select id="export-audio" style="background:var(--bg0);border:1px solid var(--border);color:var(--text);padding:3px 6px;border-radius:4px;font-family:var(--mono);font-size:11px">
           <option value="0">Pista #0</option>
@@ -613,6 +619,7 @@ let detectedAudioIdx = 0;
 let selectedTrackId = 0;
 let jobStreams = [];
 let zoomLevel = 1;
+let isSwitchingTrack = false;
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 32;
 const ZOOM_STEPS = [1, 2, 4, 6, 8, 12, 16, 24, 32];
@@ -643,6 +650,82 @@ function toast(msg, type='') {
 function seededRandom(seed) {
   let s = seed;
   return () => { s = (s * 16807 + 11) % 2147483647; return (s - 1) / 2147483646; };
+}
+
+function buildPlaybackUrl(audioIndex) {
+  const version = `${jobId || 'preview'}-${audioIndex}-${Date.now()}`;
+  return `/api/video/${jobId}?audio_index=${audioIndex}&v=${version}`;
+}
+
+async function loadPlaybackSource(audioIndex, resumeTime = 0, shouldResumePlayback = false) {
+  if (!jobId) {
+    throw new Error('No hay job activo para reproducir');
+  }
+
+  const nextSrc = buildPlaybackUrl(audioIndex);
+  debugLog('playback.load', 'Cargando fuente de playback', {
+    audioIndex,
+    resumeTime,
+    shouldResumePlayback,
+    nextSrc,
+  });
+
+  video.pause();
+
+  await new Promise((resolve, reject) => {
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      cleanup();
+      reject(new Error(`Timeout cargando la pista #${audioIndex}`));
+    }, 60000);
+
+    const cleanup = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      video.removeEventListener('loadedmetadata', onLoadedMetadata);
+      video.removeEventListener('error', onError);
+    };
+
+    const onLoadedMetadata = async () => {
+      cleanup();
+      const safeTime = Math.max(0, Math.min(resumeTime || 0, Math.max(0, video.duration - 0.25)));
+      if (safeTime > 0) {
+        video.currentTime = safeTime;
+      }
+
+      if (shouldResumePlayback) {
+        try {
+          await video.play();
+        } catch (playError) {
+          debugError('playback.load', 'No se pudo reanudar la reproducción', playError);
+        }
+      }
+
+      debugLog('playback.load', 'Fuente de playback lista', {
+        audioIndex,
+        duration: video.duration,
+        currentTime: video.currentTime,
+      });
+      resolve();
+    };
+
+    const onError = () => {
+      cleanup();
+      const mediaError = video.error
+        ? {
+            code: video.error.code,
+            message: video.error.message || null,
+          }
+        : null;
+      reject(new Error(`Error cargando la pista #${audioIndex}` + (mediaError ? ` (${JSON.stringify(mediaError)})` : '')));
+    };
+
+    video.addEventListener('loadedmetadata', onLoadedMetadata);
+    video.addEventListener('error', onError);
+    video.src = nextSrc;
+    video.load();
+  });
 }
 
 // ── SOURCE TOGGLE ──
@@ -883,20 +966,75 @@ function buildTrackRows() {
   inner.appendChild(playhead);
 }
 
-function selectTrack(idx) {
+function syncTrackUI() {
+  document.querySelectorAll('.tl-label[data-track]').forEach(el => {
+    el.classList.toggle('active', parseInt(el.dataset.track, 10) === selectedTrackId);
+  });
+  document.querySelectorAll('.track-row').forEach(el => {
+    el.classList.toggle('track-row-active', parseInt(el.dataset.track, 10) === selectedTrackId);
+  });
+  const playbackSelect = document.getElementById('playback-audio');
+  if (playbackSelect) {
+    playbackSelect.value = String(selectedTrackId);
+  }
+  updateAudioBadge();
+  renderWaveforms();
+}
+
+async function selectTrack(idx) {
   debugLog('tracks.select', 'Seleccionando track', {
     previous: selectedTrackId,
     next: idx,
+    isSwitchingTrack,
   });
-  selectedTrackId = idx;
-  document.querySelectorAll('.tl-label[data-track]').forEach(el => {
-    el.classList.toggle('active', parseInt(el.dataset.track) === idx);
-  });
-  document.querySelectorAll('.track-row').forEach(el => {
-    el.classList.toggle('track-row-active', parseInt(el.dataset.track) === idx);
-  });
-  updateAudioBadge();
-  renderWaveforms();
+
+  if (Number.isNaN(idx) || idx < 0 || idx >= jobStreams.length) {
+    toast(`Pista inválida: #${idx}`, 'error');
+    return;
+  }
+
+  if (idx === selectedTrackId) {
+    syncTrackUI();
+    return;
+  }
+
+  if (isSwitchingTrack) {
+    toast('Ya se está cambiando de pista...', 'error');
+    return;
+  }
+
+  isSwitchingTrack = true;
+  const previousTrackId = selectedTrackId;
+  const resumeTime = video.currentTime || 0;
+  const shouldResumePlayback = !video.paused;
+
+  toast(`Cambiando a pista #${idx}...`);
+
+  try {
+    await loadPlaybackSource(idx, resumeTime, shouldResumePlayback);
+    selectedTrackId = idx;
+    videoDuration = video.duration;
+    syncTrackUI();
+    onTimeUpdate();
+    buildRuler();
+    renderTimeline();
+    renderSegList();
+    toast(`✅ Pista #${idx} cargada`, 'success');
+  } catch (error) {
+    debugError('tracks.select', 'Error cambiando de pista', error);
+    try {
+      await loadPlaybackSource(previousTrackId, resumeTime, shouldResumePlayback);
+    } catch (restoreError) {
+      debugError('tracks.select', 'Error restaurando pista anterior', restoreError);
+    }
+    selectedTrackId = previousTrackId;
+    videoDuration = video.duration || videoDuration;
+    syncTrackUI();
+    onTimeUpdate();
+    toast(error.message || 'No se pudo cambiar la pista', 'error');
+  } finally {
+    isSwitchingTrack = false;
+  }
 }
 
 function updateAudioBadge() {
@@ -1013,36 +1151,51 @@ function openEditor(job) {
 
   // Populate export audio dropdown
   const audioSelect = document.getElementById('export-audio');
+  const playbackAudioSelect = document.getElementById('playback-audio');
   audioSelect.innerHTML = '';
+  playbackAudioSelect.innerHTML = '';
   jobStreams.forEach((s, idx) => {
     const ch = s.channels === 6 ? '5.1' : s.channels === 2 ? '2.0' : `${s.channels || '?'}ch`;
-    const opt = document.createElement('option');
-    opt.value = idx;
-    opt.textContent = `#${idx} · ${s.language || 'und'} · ${s.codec || ''} ${ch}${s.title ? ' · ' + s.title : ''}`;
-    if (idx === selectedTrackId) opt.selected = true;
-    audioSelect.appendChild(opt);
+    const label = `#${idx} · ${s.language || 'und'} · ${s.codec || ''} ${ch}${s.title ? ' · ' + s.title : ''}`;
+
+    const playbackOpt = document.createElement('option');
+    playbackOpt.value = idx;
+    playbackOpt.textContent = label;
+    if (idx === selectedTrackId) playbackOpt.selected = true;
+    playbackAudioSelect.appendChild(playbackOpt);
+
+    const exportOpt = document.createElement('option');
+    exportOpt.value = idx;
+    exportOpt.textContent = label;
+    if (idx === selectedTrackId) exportOpt.selected = true;
+    audioSelect.appendChild(exportOpt);
   });
 
   buildTrackLabels();
   buildTrackRows();
   initResizeHandle();
-  updateAudioBadge();
+  syncTrackUI();
 
-  video.src = `/api/video/${jobId}`;
-  debugLog('editor.open', 'Asignando src de video', {
-    jobId,
-    videoSrc: video.src,
-  });
-  video.addEventListener('loadedmetadata', () => {
-    videoDuration = video.duration;
-    debugLog('editor.video', 'Metadata cargada', {
-      duration: videoDuration,
-      videoWidth: video.videoWidth,
-      videoHeight: video.videoHeight,
-    });
-    buildRuler(); renderWaveforms(); renderTimeline(); renderSegList();
-  }, {once: true});
+  video.removeEventListener('timeupdate', onTimeUpdate);
   video.addEventListener('timeupdate', onTimeUpdate);
+  loadPlaybackSource(selectedTrackId, 0, false)
+    .then(() => {
+      videoDuration = video.duration;
+      debugLog('editor.video', 'Metadata cargada', {
+        duration: videoDuration,
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+        selectedTrackId,
+      });
+      buildRuler();
+      renderWaveforms();
+      renderTimeline();
+      renderSegList();
+    })
+    .catch(error => {
+      debugError('editor.open', 'No se pudo cargar la fuente inicial de playback', error);
+      toast(error.message || 'No se pudo cargar el video del editor', 'error');
+    });
 }
 
 function onTimeUpdate() {
