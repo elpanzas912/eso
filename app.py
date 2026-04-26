@@ -333,7 +333,7 @@ def _run_job(
             long_path, model_size, progress_cb=progress, audio_index=audio_index
         )
 
-        update_job(job_id, progress="Transcribiendo clip corto...")
+        update_job(job_id, status="transcribing", progress="Transcribiendo clip corto...")
         short_words = processor.transcribe_video(
             short_path, model_size, progress_cb=progress
         )
@@ -411,17 +411,17 @@ def _run_detection(job_id, short_url, series_name, language, model_size):
         update_job(job_id, progress=msg)
 
     try:
-        update_job(job_id, status="detecting", progress="Descargando clip corto...")
+        update_job(job_id, status="downloading", progress="Descargando clip corto...")
         short_path = processor.download_video(
             short_url, job_dir / "short", progress_cb=progress
         )
 
-        update_job(job_id, progress="Transcribiendo clip corto...")
+        update_job(job_id, status="transcribing", progress="Transcribiendo clip corto...")
         short_words = processor.transcribe_video(
             short_path, model_size, progress_cb=progress
         )
 
-        update_job(job_id, progress=f"Buscando en episodios de '{series_name}'...")
+        update_job(job_id, status="matching", progress=f"Buscando en episodios de '{series_name}'...")
         results = episode_matcher.detect_episode(
             short_words, series_name, language=language, top_n=3
         )

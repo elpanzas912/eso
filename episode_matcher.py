@@ -64,10 +64,17 @@ def detect_episode(
     results = []
     short_len = len(short_text)
 
-    for ep in episodes:
+    print(
+        f"[ClipFinder] Comparando contra {len(episodes)} episodios de '{series_name}'..."
+    )
+
+    for i, ep in enumerate(episodes):
         ep_text = _get_episode_text(ep.get("subtitle_path"))
         if not ep_text or len(ep_text) < 50:
             continue
+
+        if i > 0 and i % 50 == 0:
+            print(f"[ClipFinder] Comparados {i}/{len(episodes)} episodios...")
 
         score = fuzz.token_set_ratio(short_text, ep_text)
 
