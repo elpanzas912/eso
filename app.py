@@ -402,10 +402,6 @@ def _run_job(
         update_job(job_id, status="error", error=str(e), progress=f"❌ Error: {e}")
 
 
-if __name__ == "__main__":
-    app.run(debug=False, port=5050, threaded=True, use_reloader=False)
-
-
 def _run_detection(job_id, short_url, series_name, language, model_size):
     job_dir = WORK_DIR / job_id
     job_dir.mkdir(exist_ok=True)
@@ -453,3 +449,7 @@ def _run_detection(job_id, short_url, series_name, language, model_size):
         print(f"[ClipFinder] Detect {job_id} ERROR: {e}")
         print(traceback.format_exc())
         update_job(job_id, status="error", error=str(e), progress=f"❌ Error: {e}")
+
+
+if __name__ == "__main__":
+    app.run(debug=False, port=5050, threaded=True, use_reloader=False)
