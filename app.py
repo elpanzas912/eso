@@ -12,6 +12,8 @@ from flask import Flask, jsonify, request, send_file, render_template, abort
 
 import processor
 from processor import WORK_DIR
+import episode_matcher
+from subtitle_loader import load_series_registry, save_series_registry
 
 RESIDUOS_DIR = Path(__file__).resolve().parent / "residuos para ia"
 RESIDUOS_DIR.mkdir(parents=True, exist_ok=True)
@@ -40,6 +42,69 @@ def index():
 @app.route("/example")
 def example():
     return render_template("example.html")
+
+
+@app.route("/detect")
+def detect():
+    return render_template("detect.html")
+
+
+@app.route("/editor")
+def editor():
+    return render_template("index.html")
+
+
+@app.route("/api/series", methods=["GET"])
+def list_series():
+    return jsonify(episode_matcher.list_series())
+
+
+@app.route("/api/series", methods=["POST"])
+def add_series():
+    data = request.get_json()
+    name = (data or {}).get("name", "").strip()
+    subs_path = (data or {}).get("subtitles_path", "").strip()
+    vids_path = (data or {}).get("videos_path", "").strip()
+    language = (data or {}).get("language", "en").strip()
+
+    if not name or not subs_path:
+        return jsonify({"error": "Nombre y ruta de subtítulos son obligatorios"}), 400
+
+    if not Path(subs_path).exists():
+        return jsonify({"error": f"Ruta de subtítulos no encontrada: {subs_path}"}), 400
+
+    try:
+        series = episode_matcher.add_series(name, subs_path, vids_path, language)
+        return jsonify(series)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/detect", methods=["POST"])
+def detect_episode():
+    data = request.get_json()
+    short_url = (data or {}).get("short_url", "").strip()
+    series_name = (data or {}).get("series_name", "").strip()
+    language = (data or {}).get("language", "en").strip()
+    model = (data or {}).get("model", "base").strip()
+
+    if not short_url or not series_name:
+        return jsonify(
+            {"error": "URL del clip y nombre de serie son obligatorios"}
+        ), 400
+
+    job_id = uuid.uuid4().hex[:8]
+    with jobs_lock:
+        jobs[job_id] = {"status": "detecting", "progress": "Descargando clip corto..."}
+
+    thread = threading.Thread(
+        target=_run_detection,
+        args=(job_id, short_url, series_name, language, model),
+    )
+    thread.daemon = True
+    thread.start()
+
+    return jsonify({"job_id": job_id})
 
 
 @app.route("/api/probe", methods=["POST"])
@@ -323,3 +388,52 @@ def _run_job(
 
 if __name__ == "__main__":
     app.run(debug=False, port=5050, threaded=True, use_reloader=False)
+
+
+def _run_detection(job_id, short_url, series_name, language, model_size):
+    job_dir = WORK_DIR / job_id
+    job_dir.mkdir(exist_ok=True)
+
+    def progress(msg):
+        print(f"[ClipFinder] Detect {job_id}: {msg}")
+        update_job(job_id, progress=msg)
+
+    try:
+        update_job(job_id, status="detecting", progress="Descargando clip corto...")
+        short_path = processor.download_video(
+            short_url, job_dir / "short", progress_cb=progress
+        )
+
+        update_job(job_id, progress="Transcribiendo clip corto...")
+        short_words = processor.transcribe_video(
+            short_path, model_size, progress_cb=progress
+        )
+
+        update_job(job_id, progress=f"Buscando en episodios de '{series_name}'...")
+        results = episode_matcher.detect_episode(
+            short_words, series_name, language=language, top_n=3
+        )
+
+        if not results:
+            update_job(
+                job_id,
+                status="done",
+                detection_results=[],
+                progress="⚠️ No se encontró ningún episodio que coincida.",
+            )
+            return
+
+        top = results[0]
+        update_job(
+            job_id,
+            status="done",
+            detection_results=results,
+            progress=f"✅ Detectado: {top['id']} — {top['title']} ({top['score']}%)",
+        )
+
+    except Exception as e:
+        import traceback
+
+        print(f"[ClipFinder] Detect {job_id} ERROR: {e}")
+        print(traceback.format_exc())
+        update_job(job_id, status="error", error=str(e), progress=f"❌ Error: {e}")

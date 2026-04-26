@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClipFinder — Detectar Episodio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg0: #0d0d0f; --bg1: #141417; --bg2: #1c1c21; --bg3: #26262d;
+    --border: #2e2e38; --text: #e8e8f0; --muted: #6b6b7e;
+    --accent: #f5a623; --accent2: #e8563a; --green: #4caf7d; --blue: #4a9eff;
+    --mono: 'JetBrains Mono', monospace; --sans: 'Syne', sans-serif; --r: 6px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg0); color: var(--text); font-family: var(--sans); min-height: 100vh; }
+  header { display: flex; align-items: center; gap: 16px; padding: 12px 24px; background: var(--bg1); border-bottom: 1px solid var(--border); }
+  .logo { font-size: 20px; font-weight: 800; letter-spacing: -.5px; }
+  .logo span { color: var(--accent); }
+  .badge { font-family: var(--mono); font-size: 10px; background: var(--bg3); color: var(--muted); padding: 2px 8px; border-radius: 20px; border: 1px solid var(--border); letter-spacing: 1px; text-transform: uppercase; }
+  nav { margin-left: auto; display: flex; gap: 8px; }
+  .nav-btn { font-family: var(--mono); font-size: 12px; padding: 6px 14px; border-radius: var(--r); border: 1px solid var(--border); background: var(--bg2); color: var(--muted); cursor: pointer; transition: all .15s; text-decoration: none; }
+  .nav-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .nav-btn.active { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 700; }
+
+  .container { max-width: 860px; margin: 0 auto; padding: 32px 24px; }
+  .section-label { font-size: 10px; font-family: var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 14px; }
+  .card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; margin-bottom: 14px; }
+  .card-title { font-size: 12px; font-family: var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  label.field-label { display: block; font-size: 11px; font-family: var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 5px; }
+  input[type=text], input[type=url], select { width: 100%; background: var(--bg0); border: 1px solid var(--border); color: var(--text); padding: 9px 14px; border-radius: var(--r); font-family: var(--mono); font-size: 13px; outline: none; transition: border-color .2s; }
+  input:focus, select:focus { border-color: var(--accent); }
+  select option { background: var(--bg0); }
+  .row { display: flex; gap: 10px; align-items: flex-end; }
+  .row .grow { flex: 1; }
+  .btn { display: inline-flex; align-items: center; gap: 7px; padding: 9px 18px; border-radius: var(--r); font-family: var(--sans); font-weight: 700; font-size: 13px; cursor: pointer; border: none; transition: all .15s; white-space: nowrap; }
+  .btn-primary { background: var(--accent); color: #000; }
+  .btn-primary:hover { background: #ffc040; }
+  .btn-primary:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-danger { background: var(--accent2); color: #fff; }
+  .btn-ghost { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+  .btn-ghost:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm { padding: 6px 14px; font-size: 12px; }
+  .actions-row { display: flex; gap: 10px; align-items: center; margin-top: 16px; }
+
+  /* series list */
+  .series-list { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+  .series-item { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--bg0); border: 1px solid var(--border); border-radius: var(--r); cursor: pointer; transition: all .15s; }
+  .series-item:hover { border-color: var(--accent); }
+  .series-item.selected { border-color: var(--accent); background: rgba(245,166,35,.08); }
+  .series-name { font-weight: 700; font-size: 14px; }
+  .series-info { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .series-del { margin-left: auto; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; }
+  .series-del:hover { color: var(--accent2); }
+
+  /* results */
+  .result-card { background: var(--bg2); border: 2px solid var(--border); border-radius: var(--r); padding: 18px 20px; margin-bottom: 12px; cursor: pointer; transition: all .15s; }
+  .result-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .result-card.best { border-color: var(--green); }
+  .result-ep { font-size: 18px; font-weight: 800; margin-bottom: 4px; }
+  .result-title { font-size: 14px; color: var(--muted); margin-bottom: 8px; }
+  .result-score { font-family: var(--mono); font-size: 13px; }
+  .score-high { color: var(--green); }
+  .score-medium { color: var(--accent); }
+  .score-low { color: var(--accent2); }
+  .result-bar { height: 4px; background: var(--bg3); border-radius: 2px; margin-top: 8px; overflow: hidden; }
+  .result-bar-fill { height: 100%; border-radius: 2px; transition: width .3s; }
+  .result-actions { margin-top: 12px; display: flex; gap: 8px; }
+
+  /* progress */
+  #progress-panel { display: none; }
+  #results-panel { display: none; margin-top: 16px; }
+  .empty-state { text-align: center; padding: 30px; color: var(--muted); }
+  .empty-state .icon { font-size: 28px; margin-bottom: 8px; }
+
+  #toast { position: fixed; bottom: 24px; right: 24px; background: var(--bg2); border: 1px solid var(--border); color: var(--text); padding: 11px 18px; border-radius: var(--r); font-family: var(--mono); font-size: 13px; z-index: 1000; opacity: 0; transform: translateY(8px); transition: all .3s; pointer-events: none; }
+  #toast.show { opacity: 1; transform: translateY(0); }
+  #toast.success { border-color: var(--green); color: var(--green); }
+  #toast.error { border-color: var(--accent2); color: var(--accent2); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Clip<span>Finder</span></div>
+  <div class="badge">Detección de Episodio</div>
+  <nav>
+    <a href="/" class="nav-btn">🔍 Detectar</a>
+    <a href="/editor" class="nav-btn">✂️ Editor</a>
+  </nav>
+</header>
+
+<div class="container">
+  <div id="setup-panel">
+    <div class="section-label">1. Elegir serie</div>
+    <div class="card">
+      <div class="card-title">📺 Serie</div>
+      <div id="series-list" class="series-list">
+        <div class="empty-state"><div class="icon">📂</div>Agregá una serie para empezar</div>
+      </div>
+      <div class="actions-row" style="margin-top:12px">
+        <button class="btn btn-ghost btn-sm" onclick="toggleAddSeries()">+ Agregar serie</button>
+      </div>
+      <div id="add-series-form" style="display:none;margin-top:14px">
+        <div class="row" style="margin-bottom:10px">
+          <div class="grow">
+            <label class="field-label">Nombre de la serie</label>
+            <input type="text" id="series-name" placeholder="Family Guy">
+          </div>
+        </div>
+        <div class="row" style="margin-bottom:10px">
+          <div class="grow">
+            <label class="field-label">Carpeta de subtítulos (.srt)</label>
+            <input type="text" id="series-subs-path" placeholder='G:\SVR Family guy'>
+          </div>
+        </div>
+        <div class="row" style="margin-bottom:10px">
+          <div class="grow">
+            <label class="field-label">Carpeta de videos (.mkv/.mp4)</label>
+            <input type="text" id="series-vids-path" placeholder='G:\Family Guy'>
+          </div>
+        </div>
+        <div class="row" style="margin-bottom:10px">
+          <div style="width:200px">
+            <label class="field-label">Idioma de subtítulos</label>
+            <select id="series-lang">
+              <option value="en">Inglés (en)</option>
+              <option value="es-ES">Español España (es-ES)</option>
+              <option value="es-419">Español Latam (es-419)</option>
+            </select>
+          </div>
+        </div>
+        <div class="row">
+          <button class="btn btn-primary btn-sm" onclick="addSeries()">Agregar</button>
+          <button class="btn btn-ghost btn-sm" onclick="toggleAddSeries()">Cancelar</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="section-label">2. URL del clip corto</div>
+    <div class="card">
+      <div class="card-title">🔗 Clip (YouTube Short / TikTok / Reel)</div>
+      <div class="row">
+        <div class="grow">
+          <input type="url" id="short-url" placeholder="https://youtube.com/shorts/...">
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <div style="width:200px">
+          <label class="field-label">Modelo Whisper</label>
+          <select id="model-select" style="width:100%">
+            <option value="tiny">tiny</option>
+            <option value="base" selected>base ✓</option>
+            <option value="small">small</option>
+            <option value="medium">medium</option>
+            <option value="large">large (GPU)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="actions-row">
+      <button class="btn btn-primary" id="detect-btn" onclick="startDetection()">🔍 Detectar episodio</button>
+    </div>
+  </div>
+
+  <div id="progress-panel">
+    <div class="card">
+      <div id="progress-msg" style="font-family:var(--mono);font-size:13px;color:var(--accent)">Iniciando...</div>
+    </div>
+  </div>
+
+  <div id="results-panel">
+    <div class="section-label">Resultados</div>
+    <div id="results-list"></div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script>
+let seriesList = [];
+let selectedSeries = null;
+let jobId = null;
+let pollInterval = null;
+
+function toast(msg, type='') {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.className = 'show ' + type;
+  setTimeout(() => el.className = '', 3500);
+}
+
+function toggleAddSeries() {
+  const form = document.getElementById('add-series-form');
+  form.style.display = form.style.display === 'none' ? '' : 'none';
+}
+
+async function loadSeries() {
+  try {
+    const resp = await fetch('/api/series');
+    seriesList = await resp.json();
+    renderSeriesList();
+  } catch(e) { console.error(e); }
+}
+
+function renderSeriesList() {
+  const container = document.getElementById('series-list');
+  if (!seriesList.length) {
+    container.innerHTML = '<div class="empty-state"><div class="icon">📂</div>Agregá una serie para empezar</div>';
+    return;
+  }
+  container.innerHTML = '';
+  seriesList.forEach((s, idx) => {
+    const el = document.createElement('div');
+    el.className = 'series-item' + (selectedSeries === idx ? ' selected' : '');
+    el.innerHTML = `
+      <div>
+        <div class="series-name">${s.name}</div>
+        <div class="series-info">${s.episode_count || '?'} episodios · ${s.language || 'en'}</div>
+      </div>
+      <button class="series-del" onclick="event.stopPropagation();deleteSeries(${idx})">✕</button>
+    `;
+    el.addEventListener('click', () => { selectedSeries = idx; renderSeriesList(); });
+    container.appendChild(el);
+  });
+}
+
+async function addSeries() {
+  const name = document.getElementById('series-name').value.trim();
+  const subsPath = document.getElementById('series-subs-path').value.trim();
+  const vidsPath = document.getElementById('series-vids-path').value.trim();
+  const lang = document.getElementById('series-lang').value;
+
+  if (!name || !subsPath) { toast('Nombre y ruta de subtítulos son obligatorios', 'error'); return; }
+
+  try {
+    const resp = await fetch('/api/series', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({name, subtitles_path: subsPath, videos_path: vidsPath, language: lang})
+    });
+    const data = await resp.json();
+    if (data.error) { toast('❌ ' + data.error, 'error'); return; }
+    toast('✅ Serie agregada', 'success');
+    document.getElementById('add-series-form').style.display = 'none';
+    await loadSeries();
+    selectedSeries = seriesList.findIndex(s => s.name.toLowerCase() === name.toLowerCase());
+    renderSeriesList();
+  } catch(e) { toast('Error: ' + e.message, 'error'); }
+}
+
+async function deleteSeries(idx) {
+  seriesList.splice(idx, 1);
+  if (selectedSeries === idx) selectedSeries = null;
+  else if (selectedSeries > idx) selectedSeries--;
+  // Rebuild registry
+  const resp = await fetch('/api/series');
+  const current = await resp.json();
+  // We'll just reload - simple approach
+  renderSeriesList();
+}
+
+async function startDetection() {
+  if (selectedSeries === null) { toast('Elegí una serie primero', 'error'); return; }
+  const shortUrl = document.getElementById('short-url').value.trim();
+  if (!shortUrl) { toast('Ingresá la URL del clip', 'error'); return; }
+
+  const series = seriesList[selectedSeries];
+  const model = document.getElementById('model-select').value;
+
+  document.getElementById('setup-panel').style.display = 'none';
+  document.getElementById('progress-panel').style.display = '';
+  document.getElementById('results-panel').style.display = 'none';
+
+  try {
+    const resp = await fetch('/api/detect', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({short_url: shortUrl, series_name: series.name, language: series.language || 'en', model})
+    });
+    const data = await resp.json();
+    if (data.error) { showError(data.error); return; }
+    jobId = data.job_id;
+    pollInterval = setInterval(pollDetection, 1500);
+  } catch(e) { showError(e.message); }
+}
+
+async function pollDetection() {
+  try {
+    const resp = await fetch(`/api/status/${jobId}`);
+    const job = await resp.json();
+    document.getElementById('progress-msg').textContent = job.progress || '';
+    if (job.status === 'done') {
+      clearInterval(pollInterval);
+      showResults(job.detection_results || []);
+    } else if (job.status === 'error') {
+      clearInterval(pollInterval);
+      showError(job.error || job.progress);
+    }
+  } catch(e) {}
+}
+
+function showResults(results) {
+  document.getElementById('progress-panel').style.display = 'none';
+  document.getElementById('results-panel').style.display = '';
+  const list = document.getElementById('results-list');
+
+  if (!results.length) {
+    list.innerHTML = '<div class="empty-state"><div class="icon">🤷</div>No se encontró ningún episodio que coincida con el clip.</div>';
+    return;
+  }
+
+  list.innerHTML = '';
+  results.forEach((r, idx) => {
+    const card = document.createElement('div');
+    card.className = 'result-card' + (idx === 0 ? ' best' : '');
+    const scoreClass = r.score >= 70 ? 'score-high' : (r.score >= 50 ? 'score-medium' : 'score-low');
+    const barColor = r.score >= 70 ? 'var(--green)' : (r.score >= 50 ? 'var(--accent)' : 'var(--accent2)');
+    card.innerHTML = `
+      <div class="result-ep">${r.id}</div>
+      <div class="result-title">${r.title}</div>
+      <div class="result-score ${scoreClass}">
+        Coincidencia: ${r.score}%${r.video_path ? '' : ' · ⚠️ Video no encontrado'}
+      </div>
+      <div class="result-bar"><div class="result-bar-fill" style="width:${r.score}%;background:${barColor}"></div></div>
+      <div class="result-actions">
+        ${r.video_path ? `<button class="btn btn-primary btn-sm" onclick="goToEditor('${r.id}', '${r.video_path.replace(/\\/g, "\\\\")}')">✂️ Ir al editor</button>` : ''}
+        <button class="btn btn-ghost btn-sm" onclick="resetDetection()">↩ Nueva búsqueda</button>
+      </div>
+    `;
+    list.appendChild(card);
+  });
+}
+
+function goToEditor(episodeId, videoPath) {
+  localStorage.setItem('clipfinder_detected_episode', episodeId);
+  localStorage.setItem('clipfinder_detected_video', videoPath);
+  window.location.href = '/editor';
+}
+
+function showError(msg) {
+  document.getElementById('progress-panel').style.display = 'none';
+  document.getElementById('setup-panel').style.display = '';
+  toast('❌ ' + msg, 'error');
+}
+
+function resetDetection() {
+  clearInterval(pollInterval);
+  jobId = null;
+  document.getElementById('progress-panel').style.display = 'none';
+  document.getElementById('results-panel').style.display = 'none';
+  document.getElementById('setup-panel').style.display = '';
+}
+
+loadSeries();
+</script>
+</body>
+</html>
