@@ -36,22 +36,38 @@ def update_job(job_id: str, **kwargs):
 
 @app.route("/")
 def index():
-    return render_template("detect.html")
+    return (
+        render_template("detect.html"),
+        200,
+        {"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 @app.route("/example")
 def example():
-    return render_template("example.html")
+    return (
+        render_template("example.html"),
+        200,
+        {"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 @app.route("/detect")
 def detect():
-    return render_template("detect.html")
+    return (
+        render_template("detect.html"),
+        200,
+        {"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 @app.route("/editor")
 def editor():
-    return render_template("index.html")
+    return (
+        render_template("index.html"),
+        200,
+        {"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 @app.route("/api/series", methods=["GET"])
