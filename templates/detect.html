@@ -87,7 +87,7 @@
   <div class="logo">Clip<span>Finder</span></div>
   <div class="badge">Detección de Episodio</div>
   <nav>
-    <a href="/" class="nav-btn">🔍 Detectar</a>
+    <a href="/" class="nav-btn active">🔍 Detectar</a>
     <a href="/editor" class="nav-btn">✂️ Editor</a>
   </nav>
 </header>
@@ -335,9 +335,17 @@ function showResults(results) {
 }
 
 function goToEditor(episodeId, videoPath) {
-  localStorage.setItem('clipfinder_detected_episode', episodeId);
-  localStorage.setItem('clipfinder_detected_video', videoPath);
-  window.location.href = '/editor';
+  const shortUrl = document.getElementById('short-url').value.trim();
+  const model = document.getElementById('model-select').value;
+  const series = seriesList[selectedSeries] || {};
+  localStorage.setItem('cf_short_url', shortUrl);
+  localStorage.setItem('cf_model', model);
+  localStorage.setItem('cf_detected_episode', episodeId);
+  localStorage.setItem('cf_detected_video', videoPath);
+  localStorage.setItem('cf_series_name', series.name || '');
+  localStorage.setItem('cf_language', series.language || 'en');
+  localStorage.setItem('cf_detect_job', jobId || '');
+  window.location.href = '/editor?auto=1';
 }
 
 function showError(msg) {

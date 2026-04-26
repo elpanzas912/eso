@@ -36,7 +36,7 @@ def update_job(job_id: str, **kwargs):
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("detect.html")
 
 
 @app.route("/example")

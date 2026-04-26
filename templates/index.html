@@ -376,7 +376,7 @@
   <div class="logo">Clip<span>Finder</span></div>
   <div class="badge">Transcription Match · MKV Ready</div>
   <div style="margin-left:auto; display:flex; gap:8px; align-items:center">
-    <a href="/detect" class="btn btn-ghost btn-sm" style="text-decoration:none">🔍 Detectar</a>
+    <a href="/" class="btn btn-ghost btn-sm" style="text-decoration:none">🔍 Detectar episodio</a>
     <button class="btn btn-ghost btn-sm" id="reset-btn" onclick="resetApp()" style="display:none">↩ Nueva búsqueda</button>
   </div>
 </header>
@@ -1162,6 +1162,36 @@ document.getElementById('tracks-scroll').addEventListener('wheel', e => {
     zoomTimeline(dir);
   }
 }, {passive: false});
-</script>
+
+// ── AUTO-START FROM DETECTION ──
+(function autoStart() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('auto') !== '1') return;
+
+  const videoPath = localStorage.getItem('cf_detected_video');
+  const shortUrl = localStorage.getItem('cf_short_url');
+  const model = localStorage.getItem('cf_model') || 'base';
+
+  if (!videoPath || !shortUrl) {
+    toast('No se encontraron datos de detección. Volvé a la página de detección.', 'error');
+    return;
+  }
+
+  localStorage.removeItem('cf_detected_video');
+  localStorage.removeItem('cf_short_url');
+  localStorage.removeItem('cf_model');
+  localStorage.removeItem('cf_detected_episode');
+  localStorage.removeItem('cf_series_name');
+  localStorage.removeItem('cf_language');
+  localStorage.removeItem('cf_detect_job');
+
+  currentSource = 'local';
+  document.getElementById('long-path').value = videoPath;
+  document.getElementById('short-url').value = shortUrl;
+  document.getElementById('model-select').value = model;
+
+  toast('Cargando episodio detectado...');
+  setTimeout(() => startProcess(), 800);
+})();
 </body>
 </html>
