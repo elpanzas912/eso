@@ -149,11 +149,53 @@
 
   /* EDITOR LAYOUT */
   #editor { display: none; flex-direction: column; height: calc(100vh - 53px); }
+  #viewer-area {
+    display: flex; flex: 1 1 0; min-height: 160px; overflow: hidden;
+    background: #000;
+  }
   #video-area {
     background: #000; display: flex; align-items: center; justify-content: center;
     flex: 1 1 0; min-height: 120px; overflow: hidden;
   }
   #main-video { max-width: 100%; max-height: 100%; display: block; outline: none; }
+  #short-panel {
+    width: 360px; flex: 0 0 360px; display: flex; flex-direction: column;
+    background: var(--bg1); border-left: 1px solid var(--border); min-width: 280px;
+  }
+  #short-panel.collapsed { display: none; }
+  .short-panel-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 12px 12px 8px; font-family: var(--mono); font-size: 12px;
+    color: var(--text); font-weight: 700;
+  }
+  .short-panel-head span { flex: 1; }
+  .short-icon-btn {
+    width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+    border: 1px solid var(--border); background: var(--bg2); color: var(--muted);
+    border-radius: 4px; cursor: pointer; font-size: 16px; line-height: 1;
+  }
+  .short-icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .short-url-row { display: flex; gap: 6px; padding: 0 12px 10px; }
+  .short-url-row input {
+    min-width: 0; flex: 1; padding: 7px 9px; font-size: 11px;
+  }
+  .short-url-row .btn { padding: 7px 10px; font-size: 11px; }
+  #short-frame-wrap {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    padding: 8px 12px 14px; overflow: hidden;
+  }
+  #short-frame-box {
+    width: min(100%, 250px); aspect-ratio: 9 / 16;
+    background: var(--bg0); border: 1px solid var(--border);
+    border-radius: var(--r); overflow: hidden;
+  }
+  #short-frame { width: 100%; height: 100%; border: 0; display: block; }
+  #short-empty {
+    height: 100%; display: flex; align-items: center; justify-content: center;
+    padding: 18px; color: var(--muted); font-family: var(--mono); font-size: 11px;
+    text-align: center; line-height: 1.5;
+  }
+  #show-short-btn { display: none; }
 
   /* Resize handle */
   #resize-bar-h {
@@ -339,7 +381,20 @@
     background: var(--bg1); border-left: 1px solid var(--border);
     display: flex; flex-direction: column; overflow: hidden;
   }
-  .seg-panel-title { font-size: 10px; font-family: var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 2px; margin-bottom: 7px; padding: 10px 12px 0; }
+  .seg-panel-title {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 10px; font-family: var(--mono); color: var(--muted);
+    text-transform: uppercase; letter-spacing: 2px; margin-bottom: 7px; padding: 10px 12px 0;
+  }
+  .seg-panel-title span { flex: 1; }
+  .seg-panel-actions { display: flex; gap: 4px; }
+  .seg-panel-btn {
+    background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+    cursor: pointer; font-size: 10px; padding: 4px 7px; border-radius: 4px;
+    line-height: 1; font-family: var(--mono); text-transform: none; letter-spacing: 0;
+  }
+  .seg-panel-btn:hover:not(:disabled) { color: #000; background: var(--accent); border-color: var(--accent); }
+  .seg-panel-btn:disabled { opacity: .35; cursor: default; }
   #seg-list { display: flex; flex-direction: column; gap: 4px; padding: 4px 12px 12px; overflow-y: auto; flex: 1; }
   .seg-row {
     display: flex; align-items: center; gap: 6px; padding: 6px 8px;
@@ -349,11 +404,28 @@
   }
   .seg-row:hover { border-color: var(--accent); }
   .seg-row.active { border-color: var(--accent); background: rgba(245,166,35,.08); }
+  .seg-row.dragging { opacity: .45; border-color: var(--accent); }
+  .seg-row.drop-before { border-top-color: var(--accent); }
+  .seg-row.drop-after { border-bottom-color: var(--accent); }
+  .seg-grip {
+    color: var(--muted); cursor: grab; user-select: none;
+    font-size: 13px; line-height: 1; padding: 0 2px;
+  }
+  .seg-grip:active { cursor: grabbing; }
   .seg-num { color: var(--accent); font-weight: 700; min-width: 18px; }
   .seg-time { color: var(--text); white-space: nowrap; }
   .seg-sep { color: var(--muted); }
   .seg-text { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
   .seg-conf { font-size: 9px; color: var(--green); white-space: nowrap; }
+  .seg-order { display: flex; flex-direction: column; align-items: center; gap: 2px; flex-shrink: 0; }
+  .seg-move {
+    width: 18px; height: 16px; display: flex; align-items: center; justify-content: center;
+    background: var(--bg0); border: 1px solid var(--border); color: var(--text);
+    cursor: pointer; font-size: 10px; padding: 0; border-radius: 3px;
+    line-height: 1; font-family: var(--mono);
+  }
+  .seg-move:hover:not(:disabled) { color: #000; background: var(--accent); border-color: var(--accent); }
+  .seg-move:disabled { opacity: .25; cursor: default; }
   .seg-del { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 13px; padding: 0 2px; border-radius: 3px; transition: color .15s; line-height: 1; }
   .seg-del:hover { color: var(--accent2); }
   .empty-state { text-align: center; padding: 30px; color: var(--muted); font-size: 13px; font-family: var(--mono); }
@@ -433,6 +505,7 @@
       </select>
     </div>
     <div style="margin-left:auto;display:flex;gap:8px;align-items:flex-end">
+      <button class="btn btn-ghost" onclick="startEditorOnly()">Abrir editor</button>
       <button class="btn btn-primary" onclick="startProcess()">▶ Detectar segmentos</button>
     </div>
   </div>
@@ -453,10 +526,30 @@
 
 <!-- EDITOR -->
 <div id="editor">
-  <div id="video-area">
-    <video id="main-video" controls preload="metadata">
-      Tu navegador no soporta este formato de video.
-    </video>
+  <div id="viewer-area">
+    <div id="video-area">
+      <video id="main-video" controls preload="metadata">
+        Tu navegador no soporta este formato de video.
+      </video>
+    </div>
+
+    <aside id="short-panel">
+      <div class="short-panel-head">
+        <span>YouTube Short</span>
+        <button class="short-icon-btn" onclick="toggleShortPanel(false)" title="Ocultar panel">×</button>
+      </div>
+      <div class="short-url-row">
+        <input type="url" id="short-ref-url" placeholder="https://youtube.com/shorts/..." onkeydown="if(event.key==='Enter') updateShortReferenceFromField()">
+        <button class="btn btn-ghost btn-sm" onclick="updateShortReferenceFromField()">Cargar</button>
+        <button class="btn btn-ghost btn-sm" onclick="openShortReference()">Abrir</button>
+      </div>
+      <div id="short-frame-wrap">
+        <div id="short-frame-box">
+          <div id="short-empty">Pegá una URL de YouTube Short para verla acá.</div>
+          <iframe id="short-frame" title="YouTube Short integrado" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen style="display:none"></iframe>
+        </div>
+      </div>
+    </aside>
   </div>
 
   <div id="resize-bar-h"></div>
@@ -471,6 +564,7 @@
       <div id="timecode">00:00:00 / 00:00:00</div>
       <div id="audio-badge">🎧 pista #0 · eng</div>
       <div class="spacer"></div>
+      <button class="btn btn-ghost btn-sm" id="show-short-btn" onclick="toggleShortPanel(true)">Short</button>
       <span id="seg-count-badge" style="font-family:var(--mono);font-size:12px;color:var(--muted);margin-right:6px"></span>
       <div style="display:flex;align-items:center;gap:4px;font-family:var(--mono);font-size:11px;color:var(--muted)">
         <span>Escucha:</span>
@@ -517,7 +611,13 @@
       </div>
 
       <div id="seg-panel">
-        <div class="seg-panel-title">Segmentos</div>
+        <div class="seg-panel-title">
+          <span>Segmentos</span>
+          <div class="seg-panel-actions">
+            <button class="seg-panel-btn" id="active-up-btn" onclick="moveActiveSeg(-1)" disabled>Subir</button>
+            <button class="seg-panel-btn" id="active-down-btn" onclick="moveActiveSeg(1)" disabled>Bajar</button>
+          </div>
+        </div>
         <div id="seg-list">
           <div class="empty-state"><div class="icon">🎞</div>Sin segmentos</div>
         </div>
@@ -530,6 +630,21 @@
 
 <script>
 const DEBUG_PAGE = 'editor';
+
+function playBeep(frequency = 880, duration = 150, type = 'sine') {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.value = frequency;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    gain.gain.exponentialRampToValueAtTime(0.00001, ctx.currentTime + duration / 1000);
+    osc.stop(ctx.currentTime + duration / 1000);
+  } catch (e) { /* ignore audio errors */ }
+}
 
 function debugPreview(value, limit = 320) {
   try {
@@ -564,19 +679,31 @@ async function fetchWithDebug(url, options = {}, scope = 'fetch') {
 
   try {
     const resp = await fetch(url, options);
-    const clone = resp.clone();
-    let bodyText = '';
-    try {
-      bodyText = await clone.text();
-    } catch (bodyErr) {
-      bodyText = `[body unreadable: ${bodyErr.message}]`;
+    const ct = resp.headers.get('content-type') || '';
+    const isBinary = ct.startsWith('video/') || ct.startsWith('audio/') || ct === 'application/octet-stream' || ct.startsWith('image/');
+    if (isBinary) {
+      debugLog(scope, `HTTP response <- ${resp.status} ${method} ${url}`, {
+        ok: resp.ok,
+        redirected: resp.redirected,
+        type: resp.type,
+        contentLength: resp.headers.get('content-length'),
+        contentType: ct,
+      });
+    } else {
+      const clone = resp.clone();
+      let bodyText = '';
+      try {
+        bodyText = await clone.text();
+      } catch (bodyErr) {
+        bodyText = `[body unreadable: ${bodyErr.message}]`;
+      }
+      debugLog(scope, `HTTP response <- ${resp.status} ${method} ${url}`, {
+        ok: resp.ok,
+        redirected: resp.redirected,
+        type: resp.type,
+        body: debugPreview(bodyText, 700),
+      });
     }
-    debugLog(scope, `HTTP response <- ${resp.status} ${method} ${url}`, {
-      ok: resp.ok,
-      redirected: resp.redirected,
-      type: resp.type,
-      body: debugPreview(bodyText, 700),
-    });
     return resp;
   } catch (error) {
     debugError(scope, `HTTP failure ${method} ${url}`, error);
@@ -610,6 +737,8 @@ debugLog('bootstrap', 'Inicializando index.html');
 let jobId = null;
 let pollInterval = null;
 let segments = [];
+let _episodeId = null;
+let _seriesName = null;
 let activeSegIdx = -1;
 let videoDuration = 0;
 let isDragging = false;
@@ -624,6 +753,8 @@ let zoomLevel = 1;
 let isSwitchingTrack = false;
 let waveformDataByTrack = {};
 let waveformRenderToken = 0;
+let draggingSegIdx = null;
+let shortReferenceUrl = '';
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 32;
 const ZOOM_STEPS = [1, 2, 4, 6, 8, 12, 16, 24, 32];
@@ -650,6 +781,64 @@ function toast(msg, type='') {
   const el = document.getElementById('toast');
   el.textContent = msg; el.className = 'show ' + type;
   setTimeout(() => el.className = '', 3500);
+}
+
+function extractYouTubeId(url) {
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    const host = parsed.hostname.replace(/^www\./, '').replace(/^m\./, '');
+    if (host === 'youtu.be') return parsed.pathname.split('/').filter(Boolean)[0] || '';
+    if (host.endsWith('youtube.com')) {
+      if (parsed.pathname.startsWith('/shorts/')) return parsed.pathname.split('/')[2] || '';
+      if (parsed.pathname.startsWith('/embed/')) return parsed.pathname.split('/')[2] || '';
+      return parsed.searchParams.get('v') || '';
+    }
+  } catch (e) {
+    const match = String(url).match(/(?:shorts\/|youtu\.be\/|v=)([A-Za-z0-9_-]{6,})/);
+    return match ? match[1] : '';
+  }
+  return '';
+}
+
+function setShortReference(url) {
+  shortReferenceUrl = (url || '').trim();
+  const input = document.getElementById('short-ref-url');
+  const frame = document.getElementById('short-frame');
+  const empty = document.getElementById('short-empty');
+  if (input) input.value = shortReferenceUrl;
+
+  const videoId = extractYouTubeId(shortReferenceUrl);
+  if (!videoId) {
+    frame.removeAttribute('src');
+    frame.style.display = 'none';
+    empty.style.display = 'flex';
+    empty.textContent = shortReferenceUrl
+      ? 'No pude leer esa URL como YouTube Short.'
+      : 'Pegá una URL de YouTube Short para verla acá.';
+    return;
+  }
+
+  frame.src = `https://www.youtube.com/embed/${videoId}`;
+  frame.style.display = 'block';
+  empty.style.display = 'none';
+}
+
+function updateShortReferenceFromField() {
+  setShortReference(document.getElementById('short-ref-url').value);
+}
+
+function openShortReference() {
+  if (!shortReferenceUrl) {
+    toast('Pegá una URL de Short primero', 'error');
+    return;
+  }
+  window.open(shortReferenceUrl, '_blank', 'noopener');
+}
+
+function toggleShortPanel(show) {
+  document.getElementById('short-panel').classList.toggle('collapsed', !show);
+  document.getElementById('show-short-btn').style.display = show ? 'none' : '';
 }
 function seededRandom(seed) {
   let s = seed;
@@ -907,8 +1096,12 @@ async function startProcess() {
   });
 
   if (!shortUrl) { toast('Ingresá la URL del clip corto', 'error'); return; }
+  setShortReference(shortUrl);
 
   let body = {short_url: shortUrl, model, long_source: currentSource};
+  if (_episodeId) body.episode_id = _episodeId;
+  if (_seriesName) body.series_name = _seriesName;
+  body.use_original_transcription = _useOriginalTranscription;
 
   if (currentSource === 'local') {
     const path = document.getElementById('long-path').value.trim();
@@ -944,6 +1137,49 @@ async function startProcess() {
   }
 }
 
+async function startEditorOnly() {
+  const path = document.getElementById('long-path').value.trim();
+  const shortUrl = document.getElementById('short-url').value.trim();
+  debugLog('editor.session', 'Inicio de editor directo solicitado', {
+    path,
+    shortUrl,
+    detectedAudioIdx,
+  });
+
+  if (!path) { toast('Ingresá la ruta del video', 'error'); return; }
+  setShortReference(shortUrl);
+
+  document.getElementById('setup-panel').style.display = 'none';
+  document.getElementById('progress-panel').style.display = 'block';
+  document.getElementById('progress-msg').textContent = 'Preparando editor...';
+  updateSteps('probing');
+
+  try {
+    const resp = await fetchWithDebug('/api/editor_session', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        long_path: path,
+        audio_index: detectedAudioIdx,
+        segments: []
+      })
+    }, 'editor.session');
+    const data = await resp.json();
+    debugLog('editor.session', 'Sesion de editor recibida', data);
+    if (!resp.ok || data.error) { showError(data.error || 'No se pudo abrir el editor'); return; }
+
+    jobId = data.job_id;
+    segments = (data.segments || []).map(s => ({...s}));
+    detectedAudioIdx = data.audio_index ?? detectedAudioIdx;
+    jobStreams = data.streams || [];
+    playBeep(660, 120);
+    openEditor(data);
+  } catch(e) {
+    debugError('editor.session', 'Error abriendo editor directo', e);
+    showError('Error abriendo editor: ' + e.message);
+  }
+}
+
 async function pollStatus() {
   debugLog('process.poll', 'Polling de status', { jobId });
   try {
@@ -955,6 +1191,7 @@ async function pollStatus() {
     if (job.status === 'done') {
       clearInterval(pollInterval);
       debugLog('process.poll', 'Polling detenido por DONE', { jobId });
+      playBeep(880, 200);
       segments = (job.segments || []).map(s => ({...s}));
       detectedAudioIdx = job.audio_index ?? 0;
       jobStreams = job.streams || [];
@@ -1257,9 +1494,13 @@ function initResizeHandle() {
 // ── EDITOR ──
 function openEditor(job) {
   debugLog('editor.open', 'Abriendo editor', job);
+  if (document.activeElement && typeof document.activeElement.blur === 'function') {
+    document.activeElement.blur();
+  }
   document.getElementById('progress-panel').style.display = 'none';
   document.getElementById('editor').style.display = 'flex';
   document.getElementById('reset-btn').style.display = '';
+  toggleShortPanel(true);
   waveformDataByTrack = {};
   waveformRenderToken = 0;
 
@@ -1404,7 +1645,12 @@ function zoomTimeline(dir) {
   }
   document.getElementById('zoom-label').textContent = zoomLevel + '×';
   debugLog('timeline.zoom', 'Zoom aplicado', { zoomLevel });
-  buildRuler(); renderWaveforms(); renderTimeline(); renderSegList();
+  buildRuler();
+  if (!_zoomDebounceTimer) {
+    renderWaveforms();
+    renderTimeline();
+    renderSegList();
+  }
   scrollToPlayhead();
 }
 
@@ -1519,9 +1765,18 @@ function selectSeg(idx) {
   activeSegIdx = idx;
   renderTimeline();
   document.querySelectorAll('.seg-row').forEach((r, i) => r.classList.toggle('active', i === idx));
+  updateSegmentOrderControls();
 }
 
 // ── SEG LIST ──
+function updateSegmentOrderControls() {
+  const upBtn = document.getElementById('active-up-btn');
+  const downBtn = document.getElementById('active-down-btn');
+  if (!upBtn || !downBtn) return;
+  upBtn.disabled = activeSegIdx <= 0;
+  downBtn.disabled = activeSegIdx < 0 || activeSegIdx >= segments.length - 1;
+}
+
 function renderSegList() {
   const list = document.getElementById('seg-list');
   document.getElementById('seg-count-badge').textContent = `${segments.length} seg`;
@@ -1532,6 +1787,7 @@ function renderSegList() {
 
   if (!segments.length) {
     list.innerHTML = '<div class="empty-state"><div class="icon">🎞</div>Sin segmentos</div>';
+    updateSegmentOrderControls();
     return;
   }
 
@@ -1539,7 +1795,14 @@ function renderSegList() {
   segments.forEach((seg, idx) => {
     const row = document.createElement('div');
     row.className = 'seg-row' + (idx === activeSegIdx ? ' active' : '');
+    row.draggable = true;
+    row.dataset.idx = idx;
     row.innerHTML = `
+      <span class="seg-grip" title="Arrastrar para ordenar">⋮⋮</span>
+      <span class="seg-order">
+        <button class="seg-move" onclick="moveSeg(event,${idx},-1)" ${idx === 0 ? 'disabled' : ''} title="Subir segmento">▲</button>
+        <button class="seg-move" onclick="moveSeg(event,${idx},1)" ${idx === segments.length - 1 ? 'disabled' : ''} title="Bajar segmento">▼</button>
+      </span>
       <span class="seg-num">#${idx+1}</span>
       <span class="seg-time">${fmt(seg.start)}</span>
       <span class="seg-sep">→</span>
@@ -1550,7 +1813,78 @@ function renderSegList() {
       <button class="seg-del" onclick="deleteSeg(event,${idx})">✕</button>
     `;
     row.addEventListener('click', () => { selectSeg(idx); video.currentTime = seg.start; });
+    row.addEventListener('dragstart', e => startSegListDrag(e, idx));
+    row.addEventListener('dragover', e => dragOverSegList(e, idx));
+    row.addEventListener('dragleave', () => row.classList.remove('drop-before', 'drop-after'));
+    row.addEventListener('drop', e => dropSegList(e, idx));
+    row.addEventListener('dragend', finishSegListDrag);
     list.appendChild(row);
+  });
+  updateSegmentOrderControls();
+}
+
+function reorderSeg(fromIdx, toIdx) {
+  if (fromIdx === toIdx || fromIdx < 0 || toIdx < 0 || fromIdx >= segments.length || toIdx >= segments.length) return;
+  const activeSegment = activeSegIdx >= 0 ? segments[activeSegIdx] : null;
+  const [moved] = segments.splice(fromIdx, 1);
+  segments.splice(toIdx, 0, moved);
+  activeSegIdx = activeSegment ? segments.indexOf(activeSegment) : -1;
+  debugLog('segments.reorder', 'Segmentos reordenados', {
+    fromIdx,
+    toIdx,
+    activeSegIdx,
+    order: segments.map((seg, idx) => ({ idx, start: seg.start, end: seg.end, text: seg.text || '' })),
+  });
+  renderTimeline();
+  renderSegList();
+}
+
+function moveSeg(e, idx, delta) {
+  e.stopPropagation();
+  e.preventDefault();
+  reorderSeg(idx, idx + delta);
+}
+
+function moveActiveSeg(delta) {
+  if (activeSegIdx < 0) {
+    toast('Seleccioná un segmento primero', 'error');
+    return;
+  }
+  reorderSeg(activeSegIdx, activeSegIdx + delta);
+}
+
+function startSegListDrag(e, idx) {
+  draggingSegIdx = idx;
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', String(idx));
+  e.currentTarget.classList.add('dragging');
+}
+
+function dragOverSegList(e, idx) {
+  if (draggingSegIdx === null || draggingSegIdx === idx) return;
+  e.preventDefault();
+  const rect = e.currentTarget.getBoundingClientRect();
+  const after = e.clientY > rect.top + rect.height / 2;
+  e.currentTarget.classList.toggle('drop-before', !after);
+  e.currentTarget.classList.toggle('drop-after', after);
+}
+
+function dropSegList(e, idx) {
+  e.preventDefault();
+  const rect = e.currentTarget.getBoundingClientRect();
+  const after = e.clientY > rect.top + rect.height / 2;
+  const fromIdx = draggingSegIdx ?? parseInt(e.dataTransfer.getData('text/plain'), 10);
+  let toIdx = idx + (after ? 1 : 0);
+  if (fromIdx < toIdx) toIdx -= 1;
+  toIdx = Math.max(0, Math.min(segments.length - 1, toIdx));
+  finishSegListDrag();
+  reorderSeg(fromIdx, toIdx);
+}
+
+function finishSegListDrag() {
+  draggingSegIdx = null;
+  document.querySelectorAll('.seg-row').forEach(row => {
+    row.classList.remove('dragging', 'drop-before', 'drop-after');
   });
 }
 
@@ -1559,16 +1893,104 @@ function deleteSeg(e, idx) {
   debugLog('segments.delete', 'Eliminando segmento', { idx, segment: segments[idx] });
   segments.splice(idx, 1);
   if (activeSegIdx >= segments.length) activeSegIdx = segments.length - 1;
+  if (!segments.length) activeSegIdx = -1;
   renderTimeline(); renderSegList();
 }
 
+function refreshSegmentViews() {
+  renderTimeline();
+  renderSegList();
+  scrollToPlayhead();
+}
+
+function segmentAtTime(time) {
+  return segments.findIndex(seg => time > seg.start && time < seg.end);
+}
+
+let _clipDuration = 10;
+let _useOriginalTranscription = false;
 function addManualSegment() {
   const t = video.currentTime;
-  segments.push({ start: t, end: Math.min(t + 10, videoDuration), text: 'Manual', confidence: null });
-  debugLog('segments.add', 'Agregando segmento manual', { currentTime: t, segment: segments[segments.length - 1] });
+  const dur = Math.min(_clipDuration, videoDuration - t);
+  segments.push({ start: t, end: Math.min(t + dur, videoDuration), text: 'Manual', confidence: null });
+  debugLog('segments.add', 'Agregando segmento manual', { currentTime: t, segment: segments[segments.length - 1], defaultDuration: _clipDuration });
   selectSeg(segments.length - 1);
   renderTimeline(); renderSegList();
   toast('Segmento agregado — ajustá los bordes en el timeline');
+}
+
+function cutAtPlayhead() {
+  if (!videoDuration) return;
+  const t = Math.max(0, Math.min(video.currentTime || 0, videoDuration));
+  const idx = segmentAtTime(t);
+
+  if (idx === -1) {
+    addManualSegment();
+    return;
+  }
+
+  const seg = segments[idx];
+  const minDur = 0.25;
+  if (t - seg.start < minDur || seg.end - t < minDur) {
+    toast('El corte está demasiado cerca del borde', 'error');
+    return;
+  }
+
+  const left = {...seg, end: t};
+  const right = {...seg, start: t};
+  segments.splice(idx, 1, left, right);
+  activeSegIdx = idx + 1;
+  debugLog('segments.shortcut', 'Corte en playhead', { time: t, idx, left, right });
+  refreshSegmentViews();
+  toast('Corte agregado');
+}
+
+function keepAfterPlayhead() {
+  if (!videoDuration) return;
+  const t = Math.max(0, Math.min(video.currentTime || 0, videoDuration));
+  const kept = [];
+
+  segments.forEach(seg => {
+    if (seg.end <= t) return;
+    if (seg.start < t && seg.end > t) {
+      kept.push({...seg, start: t});
+      return;
+    }
+    kept.push({...seg});
+  });
+
+  segments = kept;
+  activeSegIdx = segments.findIndex(seg => t >= seg.start && t <= seg.end);
+  debugLog('segments.shortcut', 'Q aplicado: conservar despues del playhead', {
+    time: t,
+    count: segments.length,
+  });
+  refreshSegmentViews();
+  toast('Se conservó lo posterior al playhead');
+}
+
+function keepBeforePlayhead() {
+  if (!videoDuration) return;
+  const t = Math.max(0, Math.min(video.currentTime || 0, videoDuration));
+  const kept = [];
+
+  segments.forEach(seg => {
+    if (seg.start >= t) return;
+    if (seg.start < t && seg.end > t) {
+      kept.push({...seg, end: t});
+      return;
+    }
+    kept.push({...seg});
+  });
+
+  segments = kept;
+  activeSegIdx = segments.length ? Math.min(activeSegIdx, segments.length - 1) : -1;
+  debugLog('segments.shortcut', 'W aplicado: conservar antes del playhead', {
+    time: t,
+    count: segments.length,
+  });
+  refreshSegmentViews();
+  toast('Se conservó lo anterior al playhead');
 }
 
 // ── EXPORT ──
@@ -1586,7 +2008,7 @@ async function exportClip() {
   toast(`Exportando +${padBefore}s antes, +${padAfter}s después, audio #${audioIndex}...`);
 
   try {
-    const sorted = [...segments].sort((a,b) => a.start - b.start);
+    const sorted = [...segments];
     debugLog('export', 'Payload de export armado', {
       padBefore,
       padAfter,
@@ -1603,6 +2025,7 @@ async function exportClip() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = 'clip_exportado.mp4'; a.click();
     URL.revokeObjectURL(url);
+    playBeep(660, 200);
     toast('✅ Clip exportado', 'success');
     debugLog('export', 'Export completado y descarga disparada');
   } catch(e) {
@@ -1613,6 +2036,7 @@ async function exportClip() {
     debugLog('export', 'Export finalizado (finally)');
   }
 }
+
 
 // ── RESET ──
 function resetApp() {
@@ -1625,6 +2049,9 @@ function resetApp() {
   clearInterval(pollInterval);
   jobId = null; segments = []; activeSegIdx = -1; videoDuration = 0; video.src = '';
   jobStreams = []; selectedTrackId = 0;
+  shortReferenceUrl = '';
+  setShortReference('');
+  toggleShortPanel(true);
   waveformDataByTrack = {};
   waveformRenderToken = 0;
   document.getElementById('editor').style.display = 'none';
@@ -1635,23 +2062,42 @@ function resetApp() {
 }
 
 // ── KEYBOARD ──
-document.addEventListener('keydown', e => {
-  if (document.getElementById('editor').style.display === 'none') return;
-  if (e.target.tagName === 'INPUT') return;
-  debugLog('keyboard', 'Keydown capturado', {
-    code: e.code,
+function isEditableTarget(target) {
+  if (!target) return false;
+  const tag = target.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target.isContentEditable;
+}
+
+function handleEditorShortcut(e) {
+  const editor = document.getElementById('editor');
+  if (!editor || getComputedStyle(editor).display === 'none') return;
+  if (isEditableTarget(e.target)) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+  const key = (e.key || '').toLowerCase();
+  const code = e.code || '';
+  debugLog('keyboard', 'Shortcut capturado', {
+    key,
+    code,
     shiftKey: e.shiftKey,
     activeSegIdx,
+    currentTime: video.currentTime,
   });
-  if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
-  if (e.code === 'ArrowLeft') skipVideo(e.shiftKey ? -10 : -1);
-  if (e.code === 'ArrowRight') skipVideo(e.shiftKey ? 10 : 1);
-  if (e.code === 'KeyA') addManualSegment();
-  if (e.code === 'Delete' && activeSegIdx >= 0) deleteSeg({stopPropagation:()=>{}}, activeSegIdx);
-  if (e.code === 'Equal' || e.code === 'NumpadAdd') { e.preventDefault(); zoomTimeline(1); }
-  if (e.code === 'Minus' || e.code === 'NumpadSubtract') { e.preventDefault(); zoomTimeline(-1); }
-  if (e.code === 'Digit0') { e.preventDefault(); zoomTimeline(0); }
-});
+
+  if (code === 'Space' || key === ' ') { e.preventDefault(); togglePlay(); return; }
+  if (code === 'ArrowLeft') { e.preventDefault(); skipVideo(e.shiftKey ? -10 : -1); return; }
+  if (code === 'ArrowRight') { e.preventDefault(); skipVideo(e.shiftKey ? 10 : 1); return; }
+  if (code === 'KeyZ' || key === 'z') { e.preventDefault(); cutAtPlayhead(); return; }
+  if (code === 'KeyQ' || key === 'q') { e.preventDefault(); keepAfterPlayhead(); return; }
+  if (code === 'KeyW' || key === 'w') { e.preventDefault(); keepBeforePlayhead(); return; }
+  if (code === 'KeyA' || key === 'a') { e.preventDefault(); addManualSegment(); return; }
+  if (code === 'Delete' && activeSegIdx >= 0) { e.preventDefault(); deleteSeg({stopPropagation:()=>{}}, activeSegIdx); return; }
+  if (code === 'Equal' || code === 'NumpadAdd') { e.preventDefault(); zoomTimeline(1); return; }
+  if (code === 'Minus' || code === 'NumpadSubtract') { e.preventDefault(); zoomTimeline(-1); return; }
+  if (code === 'Digit0' || key === '0') { e.preventDefault(); zoomTimeline(0); }
+}
+
+window.addEventListener('keydown', handleEditorShortcut, true);
 
 window.addEventListener('resize', () => {
   debugLog('window.resize', 'Resize detectado', {
@@ -1662,21 +2108,24 @@ window.addEventListener('resize', () => {
   if (videoDuration) { buildRuler(); renderWaveforms(); renderTimeline(); }
 });
 
+let _zoomDebounceTimer = null;
 document.getElementById('tracks-scroll').addEventListener('wheel', e => {
   if (document.getElementById('editor').style.display === 'none') return;
   if (e.ctrlKey || e.metaKey) {
-    debugLog('timeline.wheel', 'Wheel con modificador para zoom', {
-      deltaY: e.deltaY,
-      ctrlKey: e.ctrlKey,
-      metaKey: e.metaKey,
-    });
     e.preventDefault();
     const dir = e.deltaY < 0 ? 1 : -1;
+    if (_zoomDebounceTimer) clearTimeout(_zoomDebounceTimer);
     zoomTimeline(dir);
+    _zoomDebounceTimer = setTimeout(() => {
+      _zoomDebounceTimer = null;
+      renderWaveforms();
+      renderTimeline();
+    }, 150);
   }
 }, {passive: false});
 
 // ── AUTO-START FROM DETECTION ──
+document.addEventListener('DOMContentLoaded', () => {
 (async function autoStart() {
   const params = new URLSearchParams(window.location.search);
   const fromKey = params.get('from') || (params.get('auto') === '1' ? '__ls__' : null);
@@ -1700,6 +2149,10 @@ document.getElementById('tracks-scroll').addEventListener('wheel', e => {
     videoPath = localStorage.getItem('cf_detected_video') || '';
     shortUrl = localStorage.getItem('cf_short_url') || '';
     model = localStorage.getItem('cf_model') || 'base';
+    _clipDuration = parseFloat(localStorage.getItem('cf_clip_duration')) || 10;
+    _episodeId = localStorage.getItem('cf_episode_id') || null;
+    _seriesName = localStorage.getItem('cf_series_name') || null;
+    _useOriginalTranscription = localStorage.getItem('cf_use_original') === 'true';
     debugLog('autostart', 'Datos cargados desde localStorage', {
       videoPath,
       shortUrl,
@@ -1708,10 +2161,12 @@ document.getElementById('tracks-scroll').addEventListener('wheel', e => {
     localStorage.removeItem('cf_detected_video');
     localStorage.removeItem('cf_short_url');
     localStorage.removeItem('cf_model');
-    localStorage.removeItem('cf_detected_episode');
+    localStorage.removeItem('cf_clip_duration');
+    localStorage.removeItem('cf_episode_id');
     localStorage.removeItem('cf_series_name');
     localStorage.removeItem('cf_language');
     localStorage.removeItem('cf_detect_job');
+    localStorage.removeItem('cf_use_original');
   } else {
     toast('Cargando datos del servidor...', '');
     try {
@@ -1722,6 +2177,10 @@ document.getElementById('tracks-scroll').addEventListener('wheel', e => {
       videoPath = data.video_path || '';
       shortUrl = data.short_url || '';
       model = data.model || 'base';
+      _clipDuration = data.clip_duration || 10;
+      _useOriginalTranscription = data.use_original_transcription || false;
+      _episodeId = data.episode_id || null;
+      _seriesName = data.series_name || null;
       toast('Datos recibidos: ' + videoPath.substring(0, 40), '');
     } catch(e) {
       debugError('autostart', 'Error cargando handoff', e);
@@ -1769,6 +2228,7 @@ document.getElementById('tracks-scroll').addEventListener('wheel', e => {
   await startProcess();
   debugLog('autostart', 'startProcess disparado desde auto-start');
 })();
+});
 </script>
 </body>
 </html>

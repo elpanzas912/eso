@@ -13,12 +13,17 @@ _LOGGER_ROOT = "clipfinder"
 _DEFAULT_LEVEL = logging.INFO
 
 
+class SafeStreamHandler(logging.StreamHandler):
+    def handleError(self, record):
+        pass
+
+
 def configure_logging() -> logging.Logger:
     logger = logging.getLogger(_LOGGER_ROOT)
     if logger.handlers:
         return logger
 
-    handler = logging.StreamHandler()
+    handler = SafeStreamHandler()
     handler.setFormatter(
         logging.Formatter(
             "%(asctime)s | %(levelname)s | %(name)s | %(message)s",

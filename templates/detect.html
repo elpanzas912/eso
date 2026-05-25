@@ -49,6 +49,7 @@
   .series-item { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--bg0); border: 1px solid var(--border); border-radius: var(--r); cursor: pointer; transition: all .15s; }
   .series-item:hover { border-color: var(--accent); }
   .series-item.selected { border-color: var(--accent); background: rgba(245,166,35,.08); }
+  .series-item.offline { border-color: var(--accent2); background: rgba(232,86,58,.06); opacity: .55; }
   .series-name { font-weight: 700; font-size: 14px; }
   .series-info { font-family: var(--mono); font-size: 11px; color: var(--muted); }
   .series-del { margin-left: auto; background: none; border: none; color: var(--muted); cursor: pointer; font-size: 16px; }
@@ -67,14 +68,25 @@
   .result-bar-fill { height: 100%; border-radius: 2px; transition: width .3s; }
   .result-actions { margin-top: 12px; display: flex; gap: 8px; }
 
-  #progress-panel { display: none; }
+  #progress-panel { display: none; margin-top: 20px; }
   #results-panel { display: none; margin-top: 16px; }
-  .step { display: flex; align-items: center; gap: 12px; font-size: 13px; color: var(--muted); font-family: var(--mono); }
-  .step.active { color: var(--text); }
-  .step.active .step-dot { background: var(--accent); animation: pulse 1s infinite; }
-  .step.done { color: var(--green); }
-  .step.done .step-dot { background: var(--green); }
-  @keyframes pulse { 0%,100%{opacity:1}50%{opacity:.3} }
+  .progress-card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--r); padding: 32px; text-align: center; }
+  .progress-title { font-size: 18px; font-weight: 700; margin-bottom: 24px; color: var(--text); }
+  .progress-track { display: flex; justify-content: space-between; position: relative; margin-bottom: 32px; padding: 0 16px; }
+  .progress-track::before { content: ''; position: absolute; top: 20px; left: 40px; right: 40px; height: 2px; background: var(--border); z-index: 0; }
+  .progress-step { display: flex; flex-direction: column; align-items: center; gap: 10px; position: relative; z-index: 1; flex: 1; }
+  .step-orb { width: 42px; height: 42px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: var(--bg3); border: 2px solid var(--border); color: var(--muted); font-size: 16px; transition: all .4s cubic-bezier(.4,0,.2,1); position: relative; }
+  .step-orb svg { width: 20px; height: 20px; }
+  .progress-step.done .step-orb { background: rgba(76,175,125,.12); border-color: var(--green); color: var(--green); }
+  .progress-step.active .step-orb { background: rgba(245,166,35,.15); border-color: var(--accent); color: var(--accent); box-shadow: 0 0 0 4px rgba(245,166,35,.15); }
+  .progress-step.active .step-orb::after { content: ''; position: absolute; inset: -2px; border-radius: 50%; border: 2px solid var(--accent); animation: orbit 1.5s linear infinite; }
+  @keyframes orbit { 0% { transform: scale(1); opacity: .8; } 100% { transform: scale(1.4); opacity: 0; } }
+  .step-label { font-size: 12px; font-family: var(--mono); color: var(--muted); transition: color .3s; }
+  .progress-step.done .step-label { color: var(--green); }
+  .progress-step.active .step-label { color: var(--accent); font-weight: 600; }
+  .progress-bar-wrap { height: 4px; background: var(--bg3); border-radius: 2px; overflow: hidden; margin-bottom: 20px; }
+  .progress-bar-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 2px; width: 0%; transition: width .6s cubic-bezier(.4,0,.2,1); }
+  #progress-msg { font-family: var(--mono); font-size: 13px; color: var(--accent); }
   .empty-state { text-align: center; padding: 30px; color: var(--muted); }
   .empty-state .icon { font-size: 28px; margin-bottom: 8px; }
 
@@ -152,6 +164,12 @@
           </select>
         </div>
       </div>
+      <div class="row" style="margin-top:10px">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:var(--text);font-size:13px;user-select:none;">
+          <input type="checkbox" id="use-srt-checkbox" style="width:auto;accent-color:var(--accent);">
+          Usar transcripción original (.srt) en el editor
+        </label>
+      </div>
     </div>
 
     <div class="actions-row">
@@ -160,13 +178,26 @@
   </div>
 
   <div id="progress-panel">
-    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:22px 24px">
-      <div class="progress-steps" style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px">
-        <div class="step" id="step-detect-download"><div class="step-dot" style="width:8px;height:8px;border-radius:50%;background:var(--border);flex-shrink:0"></div> Descargando clip...</div>
-        <div class="step" id="step-detect-transcribe"><div class="step-dot" style="width:8px;height:8px;border-radius:50%;background:var(--border);flex-shrink:0"></div> Transcribiendo con Whisper...</div>
-        <div class="step" id="step-detect-match"><div class="step-dot" style="width:8px;height:8px;border-radius:50%;background:var(--border);flex-shrink:0"></div> Buscando en episodios...</div>
+    <div class="progress-card">
+      <div class="progress-title">Buscando episodio...</div>
+      <div class="progress-bar-wrap">
+        <div class="progress-bar-fill" id="progress-bar"></div>
       </div>
-      <div id="progress-msg" style="font-family:var(--mono);font-size:12px;color:var(--accent);white-space:pre-line">Iniciando...</div>
+      <div class="progress-track">
+        <div class="progress-step" id="step-detect-download">
+          <div class="step-orb"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></div>
+          <div class="step-label">Descarga</div>
+        </div>
+        <div class="progress-step" id="step-detect-transcribe">
+          <div class="step-orb"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg></div>
+          <div class="step-label">Transcripción</div>
+        </div>
+        <div class="progress-step" id="step-detect-match">
+          <div class="step-orb"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
+          <div class="step-label">Matching</div>
+        </div>
+      </div>
+      <div id="progress-msg">Iniciando...</div>
     </div>
   </div>
 
@@ -180,6 +211,21 @@
 
 <script>
 const DEBUG_PAGE = 'detect';
+
+function playBeep(frequency = 880, duration = 150, type = 'sine') {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = type;
+    osc.frequency.value = frequency;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    gain.gain.exponentialRampToValueAtTime(0.00001, ctx.currentTime + duration / 1000);
+    osc.stop(ctx.currentTime + duration / 1000);
+  } catch (e) { /* ignore audio errors */ }
+}
 
 function debugPreview(value, limit = 320) {
   try {
@@ -302,11 +348,13 @@ function renderSeriesList() {
   }
   container.innerHTML = '';
   seriesList.forEach((s, idx) => {
+    const onlineClass = s.online === false ? ' style="opacity:0.5"' : '';
+    const onlineBadge = s.online === false ? ' · ⚠️ offline' : '';
     const el = document.createElement('div');
-    el.className = 'series-item' + (selectedSeries === idx ? ' selected' : '');
+    el.className = 'series-item' + (selectedSeries === idx ? ' selected' : '') + (s.online === false ? ' offline' : '');
     el.innerHTML = `
       <div>
-        <div class="series-name">${s.name}</div>
+        <div class="series-name">${s.name}${onlineBadge}</div>
         <div class="series-info">${s.episode_count || '?'} episodios</div>
       </div>
       <button class="series-del" data-del-idx="${idx}">✕</button>
@@ -404,30 +452,42 @@ async function pollDetection() {
     debugLog('detect.poll', 'Estado de job recibido', job);
     document.getElementById('progress-msg').textContent = job.progress || '';
 
-    const steps = {
-      'step-detect-download': ['downloading', 'detecting'],
-      'step-detect-transcribe': ['transcribing'],
-      'step-detect-match': ['matching'],
-    };
-    Object.entries(steps).forEach(([stepId, statuses]) => {
-      const el = document.getElementById(stepId);
-      el.className = 'step';
-      if (statuses.includes(job.status)) el.classList.add('active');
-      const stepOrder = ['downloading', 'transcribing', 'matching', 'done'];
-      const idx = stepOrder.indexOf(job.status);
-      const myIdx = stepOrder.indexOf(statuses.find(s => stepOrder.includes(s)));
-      if (idx > myIdx || job.status === 'done') el.classList.add('done');
+    const stepOrder = ['downloading', 'transcribing', 'matching', 'done'];
+    const currentIdx = stepOrder.indexOf(job.status);
+
+    const steps = [
+      { id: 'step-detect-download', name: 'downloading' },
+      { id: 'step-detect-transcribe', name: 'transcribing' },
+      { id: 'step-detect-match', name: 'matching' },
+    ];
+
+    let activeCount = 0;
+    steps.forEach((s, i) => {
+      const el = document.getElementById(s.id);
+      el.classList.remove('active', 'done');
+      if (job.status === 'done' || currentIdx > i) {
+        el.classList.add('done');
+        activeCount++;
+      } else if (currentIdx === i) {
+        el.classList.add('active');
+        activeCount = i + 0.5;
+      }
     });
+
+    const barFill = document.getElementById('progress-bar');
+    const pct = Math.round((activeCount / steps.length) * 100);
+    barFill.style.width = pct + '%';
 
     if (job.status === 'done') {
       clearInterval(pollInterval);
       debugLog('detect.poll', 'Polling detenido por DONE', { jobId });
-      document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+      playBeep(1100, 200);
+      document.querySelectorAll('.progress-step').forEach(s => s.classList.remove('active'));
       showResults(job.detection_results || []);
     } else if (job.status === 'error') {
       clearInterval(pollInterval);
       debugLog('detect.poll', 'Polling detenido por ERROR', { jobId });
-      document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+      document.querySelectorAll('.progress-step').forEach(s => s.classList.remove('active'));
       showError(job.error || job.progress);
     }
   } catch(e) {
@@ -483,6 +543,7 @@ async function goToEditor(idx) {
 
   const shortUrl = document.getElementById('short-url').value.trim();
   const model = document.getElementById('model-select').value;
+  const useOriginal = document.getElementById('use-srt-checkbox').checked;
 
   try {
     const resp = await fetchWithDebug('/api/handoff', {
@@ -493,7 +554,9 @@ async function goToEditor(idx) {
         short_url: shortUrl,
         model: model,
         episode_id: r.id,
-        title: r.title
+        title: r.title,
+        series_name: seriesList[selectedSeries].name,
+        use_original_transcription: useOriginal
       })
     }, 'handoff');
     const data = await resp.json();
@@ -526,6 +589,9 @@ function resetDetection() {
   document.getElementById('progress-panel').style.display = 'none';
   document.getElementById('results-panel').style.display = 'none';
   document.getElementById('setup-panel').style.display = 'block';
+  document.querySelectorAll('.progress-step').forEach(s => s.classList.remove('active', 'done'));
+  document.getElementById('progress-bar').style.width = '0%';
+  document.getElementById('progress-msg').textContent = 'Iniciando...';
 }
 
 debugLog('bootstrap', 'Inicializando detect.html');

@@ -10,5 +10,17 @@
     "subtitles_path": "G:\\SVR CHICAGO PD",
     "videos_path": "G:\\Plex\\Series\\Chicago pd",
     "language": "en"
+  },
+  {
+    "name": "Chicago fire",
+    "subtitles_path": "E:\\Chicago fire Subtitulos",
+    "videos_path": "G:\\Chicago Fire",
+    "language": "en"
+  },
+  {
+    "name": "Blue Bloods",
+    "subtitles_path": "E:\\Blue Bloods\\Transcription",
+    "videos_path": "G:\\Blue Bloods",
+    "language": "en"
   }
 ]

@@ -5,6 +5,7 @@ subtitle_loader.py - Parse SRT subtitle files and extract episode text
 import re
 import json
 import hashlib
+import string
 from pathlib import Path
 from typing import Optional
 
@@ -23,8 +24,6 @@ def _clean_text(text: str) -> str:
     text = re.sub(r"<[^>]+>", "", text)
     text = re.sub(r"\{[^}]+\}", "", text)
     text = re.sub(r"[\(\[][\s\S]*?[\)\]]", "", text)
-    import string
-
     text = text.translate(str.maketrans("", "", string.punctuation))
     text = " ".join(text.split())
     return text.strip()
@@ -71,6 +70,36 @@ def _parse_srt(srt_path: Path) -> list[dict]:
         len(entries),
     )
     return entries
+
+
+def srt_to_words(srt_path: Path) -> list[dict]:
+    """Convert SRT entries to word-level dicts matching Whisper output format."""
+    entries = _parse_srt(srt_path)
+    words = []
+    for entry in entries:
+        text = entry["text"]
+        # Strip SRT tags, newlines and parenthetical directions
+        text = text.replace("\n", " ")
+        text = re.sub(r"<[^>]+>", "", text)
+        text = re.sub(r"\{[^}]+\}", "", text)
+        text = re.sub(r"[\(\[][\s\S]*?[\)\]]", "", text)
+        word_list = text.split()
+        if not word_list:
+            continue
+        start = entry["start"]
+        end = entry["end"]
+        duration = end - start
+        word_dur = duration / len(word_list)
+        for i, w in enumerate(word_list):
+            words.append(
+                {
+                    "word": w,
+                    "start": round(start + i * word_dur, 3),
+                    "end": round(start + (i + 1) * word_dur, 3),
+                }
+            )
+    logger.info("SRT a words | path=%s | words=%s", srt_path, len(words))
+    return words
 
 
 def _srt_cache_key(srt_path: Path) -> str:

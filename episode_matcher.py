@@ -3,7 +3,7 @@ episode_matcher.py - Detect which episode a short clip belongs to
 Uses SRT subtitles + rapidfuzz for fast matching
 """
 
-import json
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -11,6 +11,7 @@ from rapidfuzz import fuzz
 
 from debug_utils import get_logger, preview
 from subtitle_loader import (
+    find_subtitle_for_episode,
     load_series_registry,
     save_series_registry,
     scan_episodes,
@@ -48,6 +49,40 @@ def _fingerprint_short(words: list[dict]) -> str:
     return " ".join(
         w["word"].lower().strip() for w in words if w.get("word", "").strip()
     )
+
+
+def find_srt_for_episode(
+    series: str | dict, episode_id: str, language: str | None = None
+) -> Optional[Path]:
+    """Find the SRT path for an episode id like S10E03."""
+    match = re.fullmatch(r"S(\d{2})E(\d{2})", (episode_id or "").strip(), re.I)
+    if not match:
+        logger.warning("ID de episodio invalido para buscar SRT | episode_id=%s", episode_id)
+        return None
+
+    series_data = series
+    if isinstance(series, str):
+        registry = load_series_registry()
+        series_data = next(
+            (s for s in registry if s.get("name", "").lower() == series.lower()),
+            None,
+        )
+
+    if not series_data:
+        logger.warning(
+            "Serie no encontrada para buscar SRT | series=%s | episode_id=%s",
+            series,
+            episode_id,
+        )
+        return None
+
+    season = int(match.group(1))
+    episode = int(match.group(2))
+    resolved_language = language or series_data.get("language", "en")
+    srt_path = find_subtitle_for_episode(
+        series_data, season, episode, language=resolved_language
+    )
+    return Path(srt_path) if srt_path else None
 
 
 def detect_episode(
@@ -220,7 +255,6 @@ def list_series() -> list[dict]:
     result = []
     for s in registry:
         subs_path = Path(s.get("subtitles_path", ""))
-        vids_path = Path(s.get("videos_path", ""))
         ep_count = 0
         if subs_path.exists():
             for season_dir in subs_path.glob("Season *"):
@@ -236,5 +270,7 @@ def list_series() -> list[dict]:
                 "episode_count": ep_count,
             }
         )
-    logger.info("Series listadas | count=%s | payload=%s", len(result), preview(result, 1000))
+    logger.info(
+        "Series listadas | count=%s | payload=%s", len(result), preview(result, 1000)
+    )
     return result

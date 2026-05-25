@@ -8,9 +8,9 @@ import json
 import os
 import shutil
 import hashlib
-import mimetypes
 import math
 import wave
+import threading
 from array import array
 from pathlib import Path
 
@@ -28,6 +28,10 @@ except ImportError:
 
 logger = get_logger("processor")
 
+_MODEL_CACHE: dict = {}
+_model_lock = threading.Lock()
+_transcribe_lock = threading.Lock()
+
 if _CUDA_AVAILABLE:
     logger.info("GPU detectada: %s", _GPU_NAME)
     logger.info(
@@ -44,6 +48,12 @@ WORK_DIR = PROJECT_ROOT / "work"
 MODELS_DIR = WORK_DIR / "_whisper_models"
 YT_CACHE_DIR = WORK_DIR / "_yt_cache"
 WAVEFORM_CACHE_DIR = WORK_DIR / "_waveform_cache"
+
+# TTLs for automatic cleanup (seconds)
+JOB_DIR_TTL = 24 * 60 * 60  # 24 hours
+WAVEFORM_CACHE_TTL = 7 * 24 * 60 * 60  # 7 days
+TRANSCRIPTION_CACHE_TTL = 30 * 24 * 60 * 60  # 30 days
+CLEANUP_INTERVAL = 6 * 60 * 60  # run cleanup every 6 hours
 
 
 def _find_ffmpeg_dir():
@@ -116,7 +126,7 @@ def probe_video(video_path: Path) -> dict:
         str(video_path),
     ]
     logger.info("Probe iniciado | path=%s | cmd=%s", video_path, _format_cmd(cmd))
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
         logger.error(
             "Probe fallo | path=%s | returncode=%s | stderr=%s",
@@ -161,7 +171,9 @@ def probe_video(video_path: Path) -> dict:
         if lines
         else "No se encontraron pistas de audio",
     }
-    logger.info("Probe completado | path=%s | payload=%s", video_path, preview(payload, 1200))
+    logger.info(
+        "Probe completado | path=%s | payload=%s", video_path, preview(payload, 1200)
+    )
     return payload
 
 
@@ -189,7 +201,7 @@ def extract_audio_track(video_path: Path, audio_index: int, output_path: Path) -
         output_path,
         _format_cmd(cmd),
     )
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if result.returncode != 0:
         logger.error(
             "Extraccion de audio fallo | video=%s | audio_index=%s | stderr=%s",
@@ -215,6 +227,13 @@ def get_waveform_peaks(
     if bins <= 0:
         raise RuntimeError(f"Cantidad de bins inválida: {bins}")
 
+    import threading
+
+    if not hasattr(get_waveform_peaks, "_locks"):
+        get_waveform_peaks._locks = {}
+    if not hasattr(get_waveform_peaks, "_locks_lock"):
+        get_waveform_peaks._locks_lock = threading.Lock()
+
     WAVEFORM_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cache_key = _waveform_cache_key(video_path, audio_index, bins)
     cache_file = WAVEFORM_CACHE_DIR / f"{cache_key}.json"
@@ -238,8 +257,12 @@ def get_waveform_peaks(
         bins,
         wav_file,
     )
-    if not wav_file.exists():
-        extract_audio_track(video_path, audio_index, wav_file)
+    cache_lock = get_waveform_peaks._locks_lock
+    with cache_lock:
+        lock = get_waveform_peaks._locks.setdefault(cache_key, threading.Lock())
+    with lock:
+        if not wav_file.exists():
+            extract_audio_track(video_path, audio_index, wav_file)
 
     with wave.open(str(wav_file), "rb") as wav:
         frame_rate = wav.getframerate()
@@ -328,13 +351,11 @@ def remux_for_browser(
         str(output_path),
     ]
     logger.info("Remux intento 1 | copy directo | cmd=%s", _format_cmd(cmd_copy))
-    result = subprocess.run(cmd_copy, capture_output=True, text=True)
+    result = subprocess.run(cmd_copy, capture_output=True, text=True, timeout=300)
     if result.returncode == 0:
         logger.info("Remux intento 1 exitoso | output=%s", output_path)
         return output_path
-    logger.warning(
-        "Remux intento 1 fallo | stderr=%s", preview(result.stderr, 1200)
-    )
+    logger.warning("Remux intento 1 fallo | stderr=%s", preview(result.stderr, 1200))
 
     # Try 2: copy video, transcode audio to AAC (only audio re-encoded)
     cmd_aac = [
@@ -357,13 +378,11 @@ def remux_for_browser(
         str(output_path),
     ]
     logger.info("Remux intento 2 | copy video + AAC | cmd=%s", _format_cmd(cmd_aac))
-    result = subprocess.run(cmd_aac, capture_output=True, text=True)
+    result = subprocess.run(cmd_aac, capture_output=True, text=True, timeout=300)
     if result.returncode == 0:
         logger.info("Remux intento 2 exitoso | output=%s", output_path)
         return output_path
-    logger.warning(
-        "Remux intento 2 fallo | stderr=%s", preview(result.stderr, 1200)
-    )
+    logger.warning("Remux intento 2 fallo | stderr=%s", preview(result.stderr, 1200))
 
     # Try 3: full re-encode (slow, last resort)
     if output_path.exists():
@@ -371,6 +390,9 @@ def remux_for_browser(
     cmd_reencode = [
         FFMPEG,
         "-y",
+        "-nostats",
+        "-loglevel",
+        "error",
         "-i",
         str(video_path),
         "-map",
@@ -392,19 +414,36 @@ def remux_for_browser(
     logger.info(
         "Remux intento 3 | reencode completo | cmd=%s", _format_cmd(cmd_reencode)
     )
-    result = subprocess.run(cmd_reencode, capture_output=True, text=True)
+    result = subprocess.run(cmd_reencode, capture_output=True, text=True, timeout=600)
     if result.returncode != 0:
-        logger.error(
-            "Remux intento 3 fallo | stderr=%s", preview(result.stderr, 1200)
-        )
+        logger.error("Remux intento 3 fallo | stderr=%s", preview(result.stderr, 1200))
         raise RuntimeError(f"ffmpeg remux error: {result.stderr}")
     logger.info("Remux intento 3 exitoso | output=%s", output_path)
     return output_path
 
 
+_short_cache: dict[str, Path] = {}
+_short_cache_lock = threading.Lock()
+_SHORT_CACHE_MAX_SIZE = 50
+
+
 def download_video(url: str, output_path: Path, progress_cb=None) -> Path:
     """Download video using yt-dlp. Returns actual path (yt-dlp may change extension)."""
     import yt_dlp
+
+    cache_key = hashlib.md5(url.encode()).hexdigest()[:16]
+    with _short_cache_lock:
+        cached = _short_cache.get(cache_key)
+    if cached is not None and cached.exists():
+        logger.info(
+            "Descarga cache hit (short global) | url=%s | cache_key=%s | path=%s",
+            url,
+            cache_key,
+            cached,
+        )
+        if progress_cb:
+            progress_cb("Usando clip cacheado...")
+        return cached
 
     class ProgressHook:
         def __call__(self, d):
@@ -456,7 +495,11 @@ def download_video(url: str, output_path: Path, progress_cb=None) -> Path:
     if not actual.exists():
         actual = output_path.with_suffix(".mp4")
     if not actual.exists():
-        candidates = list(output_path.parent.glob(output_path.stem + ".*"))
+        candidates = [
+            p
+            for p in output_path.parent.glob(output_path.stem + ".*")
+            if p.suffix.lower() in (".mp4", ".mkv", ".webm", ".m4v")
+        ]
         if candidates:
             actual = candidates[0]
             logger.info(
@@ -466,6 +509,11 @@ def download_video(url: str, output_path: Path, progress_cb=None) -> Path:
                 [str(candidate) for candidate in candidates],
             )
     logger.info("Descarga finalizada | url=%s | output=%s", url, actual)
+    with _short_cache_lock:
+        _short_cache[cache_key] = actual
+        if len(_short_cache) > _SHORT_CACHE_MAX_SIZE:
+            oldest_key = next(iter(_short_cache))
+            del _short_cache[oldest_key]
     return actual
 
 
@@ -509,35 +557,55 @@ def transcribe_video(
 
     import whisper
 
-    if progress_cb:
-        progress_cb(
-            f"Cargando modelo Whisper ({model_size}) en {_GPU_NAME or 'CPU'}..."
-        )
-    logger.info(
-        "Transcripcion iniciada | video=%s | model=%s | audio_index=%s | device=%s | cache=%s",
-        video_path,
-        model_size,
-        audio_index,
-        "cuda" if _CUDA_AVAILABLE else "cpu",
-        cache_file,
-    )
-
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     device = "cuda" if _CUDA_AVAILABLE else "cpu"
-    model = whisper.load_model(model_size, download_root=str(MODELS_DIR), device=device)
-    logger.info(
-        "Modelo Whisper cargado | model=%s | device=%s | models_dir=%s",
-        model_size,
-        device,
-        MODELS_DIR,
-    )
+    model_cache_key = f"{model_size}|{device}"
+    with _model_lock:
+        model = _MODEL_CACHE.get(model_cache_key)
+    if model is None:
+        if progress_cb:
+            progress_cb(
+                f"Cargando modelo Whisper ({model_size}) en {_GPU_NAME or 'CPU'}..."
+            )
+        logger.info(
+            "Transcripcion iniciada | video=%s | model=%s | audio_index=%s | device=%s | cache=%s",
+            video_path,
+            model_size,
+            audio_index,
+            device,
+            cache_file,
+        )
+        model = whisper.load_model(
+            model_size, download_root=str(MODELS_DIR), device=device
+        )
+        with _model_lock:
+            _MODEL_CACHE[model_cache_key] = model
+        logger.info(
+            "Modelo Whisper cargado | model=%s | device=%s | models_dir=%s",
+            model_size,
+            device,
+            MODELS_DIR,
+        )
+    else:
+        if progress_cb:
+            progress_cb(f"Usando modelo Whisper ({model_size}) cacheado...")
+        logger.info(
+            "Transcripcion iniciada | video=%s | model=%s | audio_index=%s | device=%s | cache=%s | cached_model=true",
+            video_path,
+            model_size,
+            audio_index,
+            device,
+            cache_file,
+        )
 
+    extracted_wav = None
     actual_path = video_path
     if audio_index > 0:
         if progress_cb:
             progress_cb(f"Extrayendo pista de audio #{audio_index}...")
         audio_extract_path = video_path.parent / f"_audio_track_{audio_index}.wav"
         actual_path = extract_audio_track(video_path, audio_index, audio_extract_path)
+        extracted_wav = actual_path
         logger.info(
             "Transcripcion usara audio extraido | source=%s | extracted=%s",
             video_path,
@@ -557,13 +625,14 @@ def transcribe_video(
             True,
             fp16,
         )
-        result = model.transcribe(
-            str(actual_path),
-            word_timestamps=True,
-            verbose=False,
-            language=None,
-            fp16=fp16,
-        )
+        with _transcribe_lock:
+            result = model.transcribe(
+                str(actual_path),
+                word_timestamps=True,
+                verbose=False,
+                language=None,
+                fp16=fp16,
+            )
         for segment in result.get("segments", []):
             for word_info in segment.get("words", []):
                 word = word_info.get("word", "").strip()
@@ -580,13 +649,14 @@ def transcribe_video(
             "word_timestamps fallo; usando fallback por segmentos | path=%s",
             actual_path,
         )
-        result = model.transcribe(
-            str(actual_path),
-            word_timestamps=False,
-            verbose=False,
-            language=None,
-            fp16=fp16,
-        )
+        with _transcribe_lock:
+            result = model.transcribe(
+                str(actual_path),
+                word_timestamps=False,
+                verbose=False,
+                language=None,
+                fp16=fp16,
+            )
         for segment in result.get("segments", []):
             seg_start = segment.get("start", 0)
             seg_end = segment.get("end", 0)
@@ -615,6 +685,12 @@ def transcribe_video(
         )
         raise RuntimeError(f"No se pudo transcribir {Path(actual_path).name}")
 
+    if extracted_wav is not None:
+        try:
+            os.remove(str(extracted_wav))
+            logger.info("WAV temporal eliminado | path=%s", extracted_wav)
+        except Exception:
+            pass
     cache_dir.mkdir(parents=True, exist_ok=True)
     with open(cache_file, "w", encoding="utf-8") as f:
         json.dump(words, f, ensure_ascii=False)
@@ -635,15 +711,23 @@ def find_matching_segments(
     window: int = 8,
     threshold: int = 72,
     merge_gap: float = 3.0,
+    step: int = 4,
+    srt_time_range: tuple[float, float] | None = None,
+    srt_margin: float = 120.0,
 ) -> list[dict]:
     """
     Find where segments of the short clip appear in the long video.
+    Handles non-chronological clips (scenes appearing in any order).
 
     Algorithm:
-    1. Slide a window across the short clip words
-    2. For each window, search the long video for the best fuzzy text match
-    3. Extend matched region word-by-word while similarity holds
-    4. Merge overlapping/close segments
+    1. Slide overlapping windows across the short clip
+    2. For each window, find the best fuzzy match in the long video
+    3. Cluster hits by proximity in the long video (ignores short clip order)
+    4. Each cluster becomes a segment
+    5. Merge segments close in the long video timeline
+
+    If srt_time_range is provided, limits search to that time window +/- margin
+    to dramatically reduce search space.
 
     Returns list of: {start, end, text, short_start, short_end, confidence}
     """
@@ -654,113 +738,163 @@ def find_matching_segments(
 
     n_short = len(short_words)
     n_long = len(long_words)
-    segments = []
-    i = 0
+
+    if n_short == 0 or n_long == 0:
+        logger.info("Matching descartado | short=%s | long=%s", n_short, n_long)
+        return []
+
+    long_start_idx = 0
+    long_end_idx = n_long
+    if srt_time_range is not None:
+        start_t, end_t = srt_time_range
+        search_start = max(0, start_t - srt_margin)
+        search_end = end_t + srt_margin
+        long_start_idx = 0
+        long_end_idx = n_long
+        for idx in range(n_long):
+            if long_words[idx]["start"] >= search_start:
+                long_start_idx = idx
+                break
+        for idx in range(long_start_idx, n_long):
+            if long_words[idx]["start"] > search_end:
+                long_end_idx = idx
+                break
+        trimmed_long = long_words[long_start_idx:long_end_idx]
+        logger.info(
+            "Matching con rango SRT | time_window=%.1f-%.1f | margin=%.1f | original_words=%s | trimmed_words=%s | original_start=%.1f | trimmed_start=%.1f",
+            start_t,
+            end_t,
+            srt_margin,
+            n_long,
+            len(trimmed_long),
+            long_words[0]["start"] if long_words else 0,
+            trimmed_long[0]["start"] if trimmed_long else 0,
+        )
+    else:
+        trimmed_long = long_words
+        logger.info(
+            "Matching sin rango SRT | words=%s",
+            n_long,
+        )
+
+    effective_window = min(window, n_short)
+    min_chunk = max(3, effective_window // 2)
+
     logger.info(
-        "Matching iniciado | short=%s | long=%s | window=%s | threshold=%s | merge_gap=%s",
+        "Matching iniciado | short=%s | long=%s | window=%s | step=%s | threshold=%s | merge_gap=%s",
         preview(summarize_words(short_words), 800),
-        preview(summarize_words(long_words), 800),
-        window,
+        preview(summarize_words(trimmed_long), 800),
+        effective_window,
+        step,
         threshold,
         merge_gap,
     )
 
+    hits = []
+    i = 0
     while i < n_short:
-        chunk_end = min(i + window, n_short)
+        chunk_end = min(i + effective_window, n_short)
+        chunk_len = chunk_end - i
+        if chunk_len < min_chunk and i > 0:
+            break
+
         chunk = short_words[i:chunk_end]
         chunk_text = words_text(chunk)
 
         best_score = 0
         best_j = -1
 
-        # Search long video for best match of this chunk
-        for j in range(n_long - len(chunk) + 1):
-            long_chunk = long_words[j : j + len(chunk)]
+        trimmed_limit = len(trimmed_long) - chunk_len + 1
+        for j in range(max(0, min(trimmed_limit, n_long - chunk_len + 1))):
+            if j >= len(trimmed_long) - chunk_len + 1:
+                break
+            jj = j
+            long_chunk = trimmed_long[jj : jj + chunk_len]
             score = fuzz.ratio(chunk_text, words_text(long_chunk))
             if score > best_score:
                 best_score = score
                 best_j = j
 
         logger.info(
-            "Matching chunk evaluado | short_idx=%s | chunk_end=%s | chunk_text=%s | best_score=%s | best_long_idx=%s",
+            "Matching ventana | short=%s-%s | len=%s | best_score=%s | best_long=%s | text=%s",
             i,
-            chunk_end,
-            chunk_text[:120],
+            chunk_end - 1,
+            chunk_len,
             best_score,
             best_j,
+            chunk_text[:120],
         )
 
         if best_score >= threshold and best_j >= 0:
-            # Extend match forward as long as words keep matching
-            match_len = len(chunk)
-            while i + match_len < n_short and best_j + match_len < n_long:
-                sw = short_words[i + match_len]["word"].lower()
-                lw = long_words[best_j + match_len]["word"].lower()
-                if fuzz.ratio(sw, lw) >= 60:
-                    match_len += 1
-                else:
-                    break
-
-            seg_short_start = short_words[i]["start"]
-            seg_short_end = short_words[i + match_len - 1]["end"]
-            seg_long_start = long_words[best_j]["start"]
-            seg_long_end = long_words[best_j + match_len - 1]["end"]
-            seg_text = " ".join(w["word"] for w in short_words[i : i + match_len])
-
-            segments.append(
+            hits.append(
                 {
-                    "start": seg_long_start,
-                    "end": seg_long_end,
-                    "text": seg_text,
-                    "short_start": seg_short_start,
-                    "short_end": seg_short_end,
-                    "confidence": round(best_score),
+                    "short_i": i,
+                    "short_j": chunk_end - 1,
+                    "long_i": best_j + long_start_idx,
+                    "long_j": best_j + chunk_len - 1 + long_start_idx,
+                    "score": best_score,
                 }
             )
-            logger.info(
-                "Segmento aceptado | short_idx=%s | long_idx=%s | match_len=%s | segment=%s",
-                i,
-                best_j,
-                match_len,
-                preview(segments[-1], 600),
-            )
-            i += match_len
-        else:
-            logger.info(
-                "Chunk descartado | short_idx=%s | best_score=%s | threshold=%s",
-                i,
-                best_score,
-                threshold,
-            )
-            i += 1
 
-    # Merge segments that are too close together
-    if not segments:
-        logger.info("Matching finalizado sin segmentos")
+        i += step
+
+    if not hits:
+        logger.info("Matching finalizado sin hits")
         return []
 
-    merged = [segments[0].copy()]
-    for seg in segments[1:]:
-        prev = merged[-1]
-        if seg["start"] - prev["end"] <= merge_gap:
-            logger.info(
-                "Mergeando segmentos | prev=%s | current=%s",
-                preview(prev, 400),
-                preview(seg, 400),
-            )
-            prev["end"] = max(prev["end"], seg["end"])
-            prev["short_end"] = max(prev["short_end"], seg["short_end"])
-            prev["text"] += " " + seg["text"]
-            prev["confidence"] = (prev["confidence"] + seg["confidence"]) // 2
+    logger.info("Hits encontrados | total=%s", len(hits))
+
+    hits.sort(key=lambda h: h["long_i"])
+
+    cluster_gap = effective_window * 3
+    clusters = [[hits[0]]]
+    for hit in hits[1:]:
+        cluster = clusters[-1]
+        cluster_long_max = max(h["long_j"] for h in cluster)
+        if hit["long_i"] <= cluster_long_max + cluster_gap:
+            cluster.append(hit)
         else:
-            merged.append(seg.copy())
+            clusters.append([hit])
+
+    logger.info("Clusters formados | total=%s", len(clusters))
+
+    segments = []
+    for cluster in clusters:
+        short_start_time = min(short_words[h["short_i"]]["start"] for h in cluster)
+        short_end_time = max(short_words[h["short_j"]]["end"] for h in cluster)
+        long_start_time = min(long_words[h["long_i"]]["start"] for h in cluster)
+        long_end_time = max(long_words[h["long_j"]]["end"] for h in cluster)
+
+        short_indices = sorted(
+            set(idx for h in cluster for idx in range(h["short_i"], h["short_j"] + 1))
+        )
+        text = " ".join(short_words[idx]["word"] for idx in short_indices)
+        avg_score = sum(h["score"] for h in cluster) / len(cluster)
+
+        segments.append(
+            {
+                "start": round(long_start_time, 3),
+                "end": round(long_end_time, 3),
+                "text": text,
+                "short_start": round(short_start_time, 3),
+                "short_end": round(short_end_time, 3),
+                "confidence": round(avg_score),
+            }
+        )
+
+    if not segments:
+        logger.info("Matching finalizado sin segmentos tras clustering")
+        return []
+
+    segments.sort(key=lambda s: s["short_start"])
 
     logger.info(
-        "Matching finalizado | raw=%s | merged=%s",
-        preview(summarize_segments(segments), 800),
-        preview(summarize_segments(merged), 800),
+        "Matching finalizado | hits=%s | clusters=%s | segments=%s",
+        len(hits),
+        len(clusters),
+        len(segments),
     )
-    return merged
+    return segments
 
 
 def export_clip(
@@ -801,31 +935,26 @@ def export_clip(
             preview(padded[-1], 200),
         )
 
-    padded.sort(key=lambda s: s["start"])
-
-    merged = [padded[0].copy()]
-    for seg in padded[1:]:
-        prev = merged[-1]
-        if seg["start"] <= prev["end"]:
-            prev["end"] = max(prev["end"], seg["end"])
-        else:
-            merged.append(seg.copy())
-
     logger.info(
-        "Export segmentos preparados | padded=%s | merged=%s",
+        "Export segmentos preparados | count=%s | segments=%s",
+        len(padded),
         preview(padded, 1200),
-        preview(merged, 1200),
     )
 
     work_dir = Path(output_path).parent
     work_dir.mkdir(parents=True, exist_ok=True)
     segment_files = []
 
-    for i, seg in enumerate(merged):
+    for i, seg in enumerate(padded):
         seg_path = str(work_dir / f"_seg_{i}.mp4")
         cmd = [
             FFMPEG,
             "-y",
+            "-nostats",
+            "-loglevel",
+            "error",
+            "-fflags",
+            "+genpts",
             "-ss",
             str(seg["start"]),
             "-to",
@@ -848,25 +977,23 @@ def export_clip(
             "192k",
             "-movflags",
             "+faststart",
-            "-fflags",
-            "+genpts",
             seg_path,
         ]
         logger.info(
             "Encoding segmento | idx=%s/%s | start=%.3f | end=%.3f | output=%s | cmd=%s",
             i + 1,
-            len(merged),
+            len(padded),
             seg["start"],
             seg["end"],
             seg_path,
             _format_cmd(cmd),
         )
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         if result.returncode != 0:
             for sf in segment_files:
                 try:
                     os.remove(sf)
-                except:
+                except Exception:
                     pass
             logger.error(
                 "Encoding segmento fallo | idx=%s | stderr=%s",
@@ -894,6 +1021,9 @@ def export_clip(
         cmd = [
             FFMPEG,
             "-y",
+            "-nostats",
+            "-loglevel",
+            "error",
             "-f",
             "concat",
             "-safe",
@@ -912,21 +1042,19 @@ def export_clip(
             concat_list,
             _format_cmd(cmd),
         )
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if result.returncode != 0:
-            logger.error(
-                "Concat fallo | stderr=%s", preview(result.stderr, 1500)
-            )
+            logger.error("Concat fallo | stderr=%s", preview(result.stderr, 1500))
             raise RuntimeError(f"ffmpeg concat error: {result.stderr}")
 
     for sf in segment_files:
         try:
             os.remove(sf)
-        except:
+        except Exception:
             pass
     try:
         os.remove(str(work_dir / "_concat.txt"))
-    except:
+    except Exception:
         pass
 
     logger.info("Export completado | output=%s", output_path)
@@ -953,7 +1081,9 @@ def _get_video_duration(video_path: str) -> float:
     if result.returncode == 0 and result.stdout.strip():
         try:
             duration = float(result.stdout.strip())
-            logger.info("Duracion detectada | path=%s | duration=%s", video_path, duration)
+            logger.info(
+                "Duracion detectada | path=%s | duration=%s", video_path, duration
+            )
             return duration
         except ValueError:
             logger.warning(
@@ -968,4 +1098,4 @@ def _get_video_duration(video_path: str) -> float:
             result.returncode,
             preview(result.stderr, 800),
         )
-    return float("inf")
+    raise RuntimeError(f"No se pudo determinar la duración del video: {video_path}")
