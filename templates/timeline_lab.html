@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ClipFinder Timeline Lab</title>
+  <style>
+    :root {
+      --bg: #101012;
+      --panel: #18181b;
+      --panel-2: #1f1f23;
+      --line: #303036;
+      --text: #f4f4f5;
+      --muted: #a1a1aa;
+      --accent: #f59e0b;
+      --danger: #ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Helvetica Neue", sans-serif;
+      font-size: 14px;
+    }
+
+    .topbar {
+      height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 18px;
+      border-bottom: 1px solid var(--line);
+      background: #141416;
+    }
+
+    .brand {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+      font-weight: 700;
+    }
+
+    .brand span {
+      color: var(--accent);
+    }
+
+    .topbar a {
+      color: var(--text);
+      text-decoration: none;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 7px 10px;
+      background: var(--panel-2);
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 340px;
+      min-height: calc(100vh - 52px);
+    }
+
+    .workspace {
+      min-width: 0;
+      padding: 18px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+
+    .panel-header {
+      height: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 12px;
+      border-bottom: 1px solid var(--line);
+      color: var(--muted);
+    }
+
+    .status {
+      display: flex;
+      gap: 12px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+    }
+
+    #timeline-host {
+      height: 300px;
+      width: 100%;
+      background: #111113;
+    }
+
+    .side {
+      border-left: 1px solid var(--line);
+      background: #151518;
+      padding: 18px;
+      min-width: 0;
+    }
+
+    .side h1 {
+      margin: 0 0 14px;
+      font-size: 15px;
+      font-weight: 650;
+    }
+
+    .seg-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .seg-row {
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      gap: 8px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      cursor: pointer;
+    }
+
+    .seg-row.active {
+      border-color: var(--accent);
+    }
+
+    .seg-num {
+      color: var(--accent);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .seg-time {
+      font-variant-numeric: tabular-nums;
+      color: var(--text);
+    }
+
+    .seg-text {
+      grid-column: 2;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    button {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel-2);
+      color: var(--text);
+      height: 34px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      border-color: #4a4a52;
+    }
+
+    pre {
+      margin: 0;
+      min-height: 150px;
+      max-height: 260px;
+      overflow: auto;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #101012;
+      color: #d4d4d8;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    @media (max-width: 900px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+
+      .side {
+        border-left: 0;
+        border-top: 1px solid var(--line);
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Clip<span>Finder</span> <span id="lib-status"></span></div>
+    <a href="/editor">Volver al editor</a>
+  </header>
+
+  <main>
+    <section class="workspace">
+      <div class="panel">
+        <div class="panel-header">
+          <strong>Timeline lab</strong>
+          <div class="status">
+            <span id="playhead-label">00:00:00.000</span>
+            <span id="selection-label">0 seleccionados</span>
+          </div>
+        </div>
+        <div id="timeline-host"></div>
+      </div>
+    </section>
+
+    <aside class="side">
+      <h1>Segmentos</h1>
+      <div class="seg-list" id="segment-list"></div>
+      <div class="controls">
+        <button id="zoom-out" type="button">Zoom -</button>
+        <button id="reset" type="button">Reset</button>
+        <button id="zoom-in" type="button">Zoom +</button>
+      </div>
+      <pre id="segment-json"></pre>
+    </aside>
+  </main>
+
+  <script src="/static/vendor/animation-timeline.min.js"></script>
+  <script>
+    const Timeline = window.timelineModule && window.timelineModule.Timeline;
+    const sampleSegments = [
+      { id: "seg-1", start: 5, end: 16, text: "Clip corto inicial" },
+      { id: "seg-2", start: 96, end: 110, text: "Manual" },
+      { id: "seg-3", start: 185, end: 203, text: "Remate" }
+    ];
+
+    let segments = sampleSegments.map((seg) => ({ ...seg }));
+    let activeSegmentId = segments[0].id;
+    let timeline = null;
+
+    const toUnit = (seconds) => Math.round(seconds);
+    const fromUnit = (value) => Math.round(value);
+
+    function formatTime(seconds, withMs = false) {
+      const safe = Math.max(0, Number(seconds) || 0);
+      const total = Math.floor(safe);
+      const h = String(Math.floor(total / 3600)).padStart(2, "0");
+      const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
+      const s = String(total % 60).padStart(2, "0");
+      if (!withMs) return `${h}:${m}:${s}`;
+      const ms = String(Math.round((safe - total) * 1000)).padStart(3, "0");
+      return `${h}:${m}:${s}.${ms}`;
+    }
+
+    function buildModel() {
+      const keyframes = [];
+      segments.forEach((segment) => {
+        keyframes.push({
+          val: toUnit(segment.start),
+          max: toUnit(segment.end - 1),
+          group: segment.id,
+          draggable: true,
+          style: { shape: "rect", fillColor: "#fbbf24" }
+        });
+        keyframes.push({
+          val: toUnit(segment.end),
+          min: toUnit(segment.start + 1),
+          group: segment.id,
+          draggable: true,
+          style: { shape: "rect", fillColor: "#fbbf24" }
+        });
+      });
+
+      return {
+        rows: [{
+          keyframes,
+          style: {
+            height: 48,
+            marginBottom: 0,
+            fillColor: "#18181b",
+            groupsStyle: {
+              fillColor: "rgba(245, 158, 11, 0.72)",
+              strokeColor: "#f59e0b",
+              strokeThickness: 1,
+              height: 18,
+              marginTop: 10,
+              radii: 3
+            },
+            keyframesStyle: {
+              shape: "rect",
+              width: 6,
+              height: 18,
+              fillColor: "#d4d4d8"
+            }
+          }
+        }]
+      };
+    }
+
+    function readSegmentsFromTimeline() {
+      const model = timeline.getModel();
+      const frames = (model.rows[0].keyframes || []).reduce((acc, frame) => {
+        const id = typeof frame.group === "string" ? frame.group : frame.group && frame.group.key;
+        if (!id) return acc;
+        if (!acc[id]) acc[id] = [];
+        acc[id].push(frame.val);
+        return acc;
+      }, {});
+
+      segments = segments.map((segment) => {
+        const values = (frames[segment.id] || []).slice().sort((a, b) => a - b);
+        if (values.length < 2) return segment;
+        return {
+          ...segment,
+          start: fromUnit(values[0]),
+          end: fromUnit(values[1])
+        };
+      });
+    }
+
+    function renderSegments() {
+      document.getElementById("segment-list").innerHTML = segments.map((segment, index) => `
+        <div class="seg-row ${segment.id === activeSegmentId ? "active" : ""}" data-id="${segment.id}">
+          <div class="seg-num">#${index + 1}</div>
+          <div class="seg-time">${formatTime(segment.start)} - ${formatTime(segment.end)} (${Math.round(segment.end - segment.start)}s)</div>
+          <div class="seg-text">${segment.text}</div>
+        </div>
+      `).join("");
+
+      document.querySelectorAll(".seg-row").forEach((row) => {
+        row.addEventListener("click", () => {
+          activeSegmentId = row.dataset.id;
+          syncTimeline();
+        });
+      });
+
+      document.getElementById("segment-json").textContent = JSON.stringify(segments, null, 2);
+    }
+
+    function syncTimeline() {
+      renderSegments();
+      if (timeline) {
+        timeline.setModel(buildModel());
+      }
+    }
+
+    function initTimeline() {
+      if (!Timeline) {
+        document.getElementById("lib-status").textContent = "libreria no cargada";
+        return;
+      }
+
+      document.getElementById("lib-status").textContent = "animation-timeline-js";
+      timeline = new Timeline({
+        id: document.getElementById("timeline-host"),
+        min: 0,
+        max: 2500,
+        stepPx: 70,
+        stepVal: 60,
+        snapEnabled: true,
+        snapStep: 1,
+        leftMargin: 16,
+        headerHeight: 28,
+        fillColor: "#111113",
+        headerFillColor: "#18181b",
+        labelsColor: "#a1a1aa",
+        tickColor: "#3f3f46",
+        selectionColor: "rgba(245, 158, 11, 0.2)",
+        keyframesDraggable: true,
+        groupsDraggable: true,
+        timelineStyle: {
+          fillColor: "#ef4444",
+          width: 2
+        }
+      }, buildModel());
+
+      timeline.onTimeChanged((event) => {
+        document.getElementById("playhead-label").textContent = formatTime(event.val, true);
+      });
+
+      timeline.onSelected((event) => {
+        document.getElementById("selection-label").textContent = `${event.selected.length} seleccionados`;
+        const first = event.selected[0];
+        const selectedGroup = first && (typeof first.group === "string" ? first.group : first.group && first.group.key);
+        if (selectedGroup) {
+          activeSegmentId = selectedGroup;
+          syncTimeline();
+        }
+      });
+
+      timeline.onDragFinished(() => {
+        readSegmentsFromTimeline();
+        renderSegments();
+      });
+
+      timeline.onKeyframeChanged(() => {
+        readSegmentsFromTimeline();
+        renderSegments();
+      });
+
+      renderSegments();
+      window.setTimeout(() => {
+        timeline.setModel(buildModel());
+        timeline.redraw();
+      }, 100);
+    }
+
+    document.getElementById("zoom-in").addEventListener("click", () => timeline && timeline.zoomIn(0.15));
+    document.getElementById("zoom-out").addEventListener("click", () => timeline && timeline.zoomOut(0.15));
+    document.getElementById("reset").addEventListener("click", () => {
+      segments = sampleSegments.map((seg) => ({ ...seg }));
+      activeSegmentId = segments[0].id;
+      syncTimeline();
+    });
+
+    initTimeline();
+  </script>
+</body>
+</html>

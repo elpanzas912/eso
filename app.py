@@ -325,6 +325,16 @@ def editor():
     )
 
 
+@app.route("/timeline-lab")
+def timeline_lab():
+    logger.info("Render timeline_lab.html en /timeline-lab")
+    return (
+        render_template("timeline_lab.html"),
+        200,
+        {"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
 @app.route("/api/series", methods=["GET"])
 def list_series():
     series = episode_matcher.list_series()
